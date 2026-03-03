@@ -1,23 +1,23 @@
 import { OFFICIAL_DOMAIN } from '@lobechat/const';
-import { UIChatMessage } from '@lobechat/types';
+import { type UIChatMessage } from '@lobechat/types';
 import { ModelTag } from '@lobehub/icons';
-import { Avatar } from '@lobehub/ui';
+import { Avatar, Flexbox } from '@lobehub/ui';
 import { ChatHeaderTitle } from '@lobehub/ui/chat';
+import { cx } from 'antd-style';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
 
 import { ProductLogo } from '@/components/Branding';
-import { ChatItem } from '@/features/Conversation';
+import { ChatItem } from '@/features/Conversation/ChatItem';
 import PluginTag from '@/features/PluginTag';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
-import { useSessionStore } from '@/store/session';
-import { sessionMetaSelectors, sessionSelectors } from '@/store/session/selectors';
 
-import { useContainerStyles } from '../style';
-import { useStyles } from './style';
-import { FieldType } from './type';
+import { useAgentMeta, useIsBuiltinAgent } from '../../../hooks';
+import { normalizeThinkTags, processWithArtifact } from '../../../utils/markdown';
+import { styles as containerStyles } from '../style';
+import { styles } from './style';
+import { type FieldType } from './type';
 
 interface PreviewProps extends FieldType {
   message: UIChatMessage;
@@ -32,36 +32,42 @@ const Preview = memo<PreviewProps>(
       agentSelectors.displayableAgentPlugins(s),
     ]);
 
-    const [isInbox, description, avatar, backgroundColor] = useSessionStore((s) => [
-      sessionSelectors.isInboxSession(s),
-      sessionMetaSelectors.currentAgentDescription(s),
-      sessionMetaSelectors.currentAgentAvatar(s),
-      sessionMetaSelectors.currentAgentBackgroundColor(s),
-    ]);
+    const agentMeta = useAgentMeta(message.agentId);
+    const isBuiltinAgent = useIsBuiltinAgent();
+
+    // Process message content for proper rendering
+    const processedContent = normalizeThinkTags(processWithArtifact(message.content));
 
     const { t } = useTranslation('chat');
-    const { styles } = useStyles(withBackground);
-    const { styles: containerStyles } = useContainerStyles();
 
-    const displayTitle = isInbox ? t('inbox.title') : title;
-    const displayDesc = isInbox ? t('inbox.desc') : description;
+    const displayTitle = agentMeta.title || title;
+    const displayDesc = isBuiltinAgent ? t('inbox.desc') : agentMeta.description;
 
     return (
       <div className={containerStyles.preview}>
         <div className={withBackground ? styles.background : undefined} id={previewId}>
-          <Flexbox className={styles.container} gap={16}>
+          <Flexbox
+            className={cx(styles.container, withBackground && styles.container_withBackground_true)}
+            gap={16}
+          >
             <div className={styles.header}>
-              <Flexbox align={'flex-start'} gap={12} horizontal>
-                <Avatar avatar={avatar} background={backgroundColor} size={40} title={title} />
+              <Flexbox horizontal align={'flex-start'} gap={12}>
+                <Avatar
+                  avatar={agentMeta.avatar}
+                  background={agentMeta.backgroundColor}
+                  shape={'square'}
+                  size={40}
+                  title={displayTitle}
+                />
                 <ChatHeaderTitle
                   desc={displayDesc}
+                  title={displayTitle}
                   tag={
-                    <Flexbox gap={4} horizontal>
+                    <Flexbox horizontal gap={4}>
                       <ModelTag model={model} />
                       {plugins?.length > 0 && <PluginTag plugins={plugins} />}
                     </Flexbox>
                   }
-                  title={displayTitle}
                 />
               </Flexbox>
             </div>
@@ -70,7 +76,15 @@ const Preview = memo<PreviewProps>(
               style={{ paddingTop: 24, position: 'relative' }}
               width={'100%'}
             >
-              <ChatItem id={message.id} index={0} />
+              <ChatItem
+                id={message.id}
+                message={processedContent}
+                avatar={{
+                  avatar: agentMeta.avatar,
+                  backgroundColor: agentMeta.backgroundColor,
+                  title: displayTitle,
+                }}
+              />
             </Flexbox>
             {withFooter ? (
               <Flexbox align={'center'} className={styles.footer} gap={4}>

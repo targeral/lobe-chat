@@ -1,4 +1,5 @@
-import dayjs, { Dayjs } from 'dayjs';
+import type { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
 
 const getQuarterStart = (date: Dayjs) => {
   const month = date.month();
@@ -39,3 +40,7 @@ export const lastMonth = () => monthsAgo(1).endOf('month');
 export function getYYYYmmddHHMMss(date: Date) {
   return dayjs(date).format('YYYYMMDD_HHmmss');
 }
+
+export const isNewReleaseDate = (date: string, days = 14) => {
+  return dayjs().diff(dayjs(date), 'day') < days;
+};

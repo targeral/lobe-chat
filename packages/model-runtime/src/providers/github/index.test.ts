@@ -3,7 +3,8 @@ import { ModelProvider } from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { testProvider } from '../../providerTestUtils';
-import { GithubModelCard, LobeGithubAI, params } from './index';
+import type { GithubModelCard } from './index';
+import { LobeGithubAI, params } from './index';
 
 // Basic provider tests
 testProvider({
@@ -86,8 +87,8 @@ describe('LobeGithubAI - custom features', () => {
 
         expect(result.model).toBe('o1-preview');
         expect(result.stream).toBe(false);
-        expect(result.temperature).toBe(1);
-        expect(result.top_p).toBe(1);
+        expect(result.temperature).toBe(undefined);
+        expect(result.top_p).toBe(undefined);
         expect(result.frequency_penalty).toBe(0);
         expect(result.presence_penalty).toBe(0);
       });
@@ -117,8 +118,8 @@ describe('LobeGithubAI - custom features', () => {
 
         expect(result.model).toBe('o3-preview');
         expect(result.stream).toBe(false);
-        expect(result.temperature).toBe(1);
-        expect(result.top_p).toBe(1);
+        expect(result.temperature).toBe(undefined);
+        expect(result.top_p).toBe(undefined);
       });
 
       it('should handle o3-mini models', () => {

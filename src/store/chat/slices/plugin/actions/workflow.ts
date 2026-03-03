@@ -1,9 +1,8 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix, typescript-sort-keys/interface */
-import { CreateMessageParams } from '@lobechat/types';
-import { StateCreator } from 'zustand/vanilla';
+import { type CreateMessageParams } from '@lobechat/types';
 
 import { messageService } from '@/services/message';
-import { ChatStore } from '@/store/chat/store';
+import { type ChatStore } from '@/store/chat/store';
+import { type StoreSetter } from '@/store/types';
 
 import { dbMessageSelectors, displayMessageSelectors } from '../../message/selectors';
 import { threadSelectors } from '../../thread/selectors';
@@ -12,110 +11,69 @@ import { threadSelectors } from '../../thread/selectors';
  * Workflow orchestration actions
  * Handle complex business flows involving multiple steps
  */
-export interface PluginWorkflowAction {
-  /**
-   * Create an assistant message by plugin result
-   */
-  createAssistantMessageByPlugin: (content: string, parentId: string) => Promise<void>;
 
-  /**
-   * Trigger AI message after tool calls
-   */
-  triggerAIMessage: (params: {
-    parentId?: string;
-    traceId?: string;
-    threadId?: string;
-    inPortalThread?: boolean;
-    inSearchWorkflow?: boolean;
-  }) => Promise<void>;
+type Setter = StoreSetter<ChatStore>;
+export const pluginWorkflow = (set: Setter, get: () => ChatStore, _api?: unknown) =>
+  new PluginWorkflowActionImpl(set, get, _api);
 
-  /**
-   * Trigger tool calls (V1 deprecated method)
-   * @deprecated
-   */
-  triggerToolCalls: (
-    id: string,
-    params?: { threadId?: string; inPortalThread?: boolean; inSearchWorkflow?: boolean },
-  ) => Promise<void>;
-}
+export class PluginWorkflowActionImpl {
+  readonly #get: () => ChatStore;
 
-export const pluginWorkflow: StateCreator<
-  ChatStore,
-  [['zustand/devtools', never]],
-  [],
-  PluginWorkflowAction
-> = (set, get) => ({
-  createAssistantMessageByPlugin: async (content, parentId) => {
+  constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
+    void _api;
+    void set;
+    this.#get = get;
+  }
+
+  createAssistantMessageByPlugin = async (content: string, parentId: string): Promise<void> => {
+    // Get parent message to extract agentId/topicId
+    const parentMessage = dbMessageSelectors.getDbMessageById(parentId)(this.#get());
+
     const newMessage: CreateMessageParams = {
       content,
       parentId,
       role: 'assistant',
-      sessionId: get().activeId,
-      topicId: get().activeTopicId, // if there is activeTopicId，then add it to topicId
+      agentId: parentMessage?.agentId ?? this.#get().activeAgentId,
+      topicId:
+        parentMessage?.topicId !== undefined ? parentMessage.topicId : this.#get().activeTopicId,
     };
 
     const result = await messageService.createMessage(newMessage);
-    get().replaceMessages(result.messages);
-  },
+    this.#get().replaceMessages(result.messages, {
+      context: { agentId: newMessage.agentId, topicId: newMessage.topicId },
+    });
+  };
 
-  triggerAIMessage: async ({ parentId, traceId, threadId, inPortalThread, inSearchWorkflow }) => {
-    const { internal_execAgentRuntime } = get();
+  triggerAIMessage = async ({
+    parentId,
+    threadId,
+    inPortalThread,
+    inSearchWorkflow,
+  }: {
+    parentId?: string;
+    threadId?: string;
+    inPortalThread?: boolean;
+    inSearchWorkflow?: boolean;
+  } = {}): Promise<void> => {
+    const { internal_execAgentRuntime, activeAgentId, activeTopicId } = this.#get();
 
     const chats = inPortalThread
-      ? threadSelectors.portalAIChatsWithHistoryConfig(get())
-      : displayMessageSelectors.mainAIChatsWithHistoryConfig(get());
+      ? threadSelectors.portalAIChatsWithHistoryConfig(this.#get())
+      : displayMessageSelectors.mainAIChatsWithHistoryConfig(this.#get());
 
     await internal_execAgentRuntime({
+      context: {
+        agentId: activeAgentId,
+        topicId: activeTopicId,
+        threadId,
+      },
       messages: chats,
       parentMessageId: parentId ?? chats.at(-1)!.id,
       parentMessageType: 'user',
-      traceId,
-      threadId,
       inPortalThread,
       inSearchWorkflow,
     });
-  },
+  };
+}
 
-  triggerToolCalls: async (assistantId, { threadId, inPortalThread, inSearchWorkflow } = {}) => {
-    const message = displayMessageSelectors.getDisplayMessageById(assistantId)(get());
-    if (!message || !message.tools) return;
-
-    let shouldCreateMessage = false;
-    let latestToolId = '';
-    const messagePools = message.tools.map(async (payload) => {
-      const toolMessage: CreateMessageParams = {
-        content: '',
-        parentId: assistantId,
-        plugin: payload,
-        role: 'tool',
-        sessionId: get().activeId,
-        tool_call_id: payload.id,
-        threadId,
-        topicId: get().activeTopicId, // if there is activeTopicId，then add it to topicId
-        groupId: message.groupId, // Propagate groupId from parent message for group chat
-      };
-
-      const result = await get().optimisticCreateMessage(toolMessage);
-      if (!result) return;
-
-      // trigger the plugin call
-      const data = await get().internal_invokeDifferentTypePlugin(result.id, payload);
-
-      if (data && !['markdown', 'standalone'].includes(payload.type)) {
-        shouldCreateMessage = true;
-        latestToolId = result.id;
-      }
-    });
-
-    await Promise.all(messagePools);
-
-    await get().internal_toggleMessageInToolsCalling(false, assistantId);
-
-    // only default type tool calls should trigger AI message
-    if (!shouldCreateMessage) return;
-
-    const traceId = dbMessageSelectors.getTraceIdByDbMessageId(latestToolId)(get());
-
-    await get().triggerAIMessage({ traceId, threadId, inPortalThread, inSearchWorkflow });
-  },
-});
+export type PluginWorkflowAction = Pick<PluginWorkflowActionImpl, keyof PluginWorkflowActionImpl>;

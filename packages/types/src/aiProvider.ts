@@ -1,4 +1,4 @@
-import { AiModelForSelect, EnabledAiModel, ModelSearchImplementType } from 'model-bank';
+import type { AiModelForSelect, EnabledAiModel, ModelSearchImplementType } from 'model-bank';
 import { z } from 'zod';
 
 export type ResponseAnimationStyle = 'smooth' | 'fadeIn' | 'none';
@@ -16,6 +16,70 @@ export const AiProviderSourceEnum = {
 export type AiProviderSourceType = (typeof AiProviderSourceEnum)[keyof typeof AiProviderSourceEnum];
 
 /**
+ * Authentication type for AI providers
+ */
+export const AiProviderAuthTypeEnum = {
+  ApiKey: 'apiKey',
+  OAuthDeviceFlow: 'oauthDeviceFlow',
+} as const;
+
+export type AiProviderAuthType =
+  (typeof AiProviderAuthTypeEnum)[keyof typeof AiProviderAuthTypeEnum];
+
+/**
+ * OAuth Device Flow configuration
+ */
+export interface OAuthDeviceFlowConfig {
+  /**
+   * OAuth client ID
+   */
+  clientId: string;
+  /**
+   * Default polling interval in seconds
+   * @default 5
+   */
+  defaultPollingInterval?: number;
+  /**
+   * URL to request device code
+   */
+  deviceCodeEndpoint: string;
+  /**
+   * OAuth scopes
+   */
+  scopes: string[];
+  /**
+   * URL to exchange device code for access token
+   */
+  tokenEndpoint: string;
+  /**
+   * Optional: Provider-specific token exchange endpoint (e.g., GitHub Copilot)
+   */
+  tokenExchangeEndpoint?: string;
+}
+
+/**
+ * OAuth Device Flow tokens stored in keyVaults
+ */
+export interface OAuthDeviceFlowKeyVault {
+  /**
+   * Provider-specific bearer token (e.g., Copilot token)
+   */
+  bearerToken?: string;
+  /**
+   * Bearer token expiration timestamp (ms)
+   */
+  bearerTokenExpiresAt?: number;
+  /**
+   * OAuth access token (e.g., GitHub's ghu_xxx)
+   */
+  oauthAccessToken?: string;
+  /**
+   * OAuth token expiration timestamp (ms)
+   */
+  oauthTokenExpiresAt?: number;
+}
+
+/**
  * only when provider use different sdk
  * we will add a type
  */
@@ -31,6 +95,7 @@ export const AiProviderSDKEnum = {
   Ollama: 'ollama',
   Openai: 'openai',
   Qwen: 'qwen',
+  Replicate: 'replicate',
   Router: 'router',
   Volcengine: 'volcengine',
 } as const;
@@ -48,12 +113,18 @@ const AiProviderSdkTypes = [
   'cloudflare',
   'google',
   'huggingface',
+  'replicate',
   'router',
   'volcengine',
   'qwen',
 ] as const satisfies readonly AiProviderSDKType[];
 
 export interface AiProviderSettings {
+  /**
+   * Authentication type for the provider
+   * @default 'apiKey'
+   */
+  authType?: AiProviderAuthType;
   /**
    * whether provider show browser request option by default
    *
@@ -73,6 +144,12 @@ export interface AiProviderSettings {
    * @default true
    */
   modelEditable?: boolean;
+
+  /**
+   * OAuth Device Flow configuration
+   * Only used when authType is 'oauthDeviceFlow'
+   */
+  oauthDeviceFlow?: OAuthDeviceFlowConfig;
 
   proxyUrl?:
     | {
@@ -105,10 +182,23 @@ export interface AiProviderSettings {
 
 const ResponseAnimationType = z.enum(['smooth', 'fadeIn', 'none']);
 
+const AiProviderAuthTypes = ['apiKey', 'oauthDeviceFlow'] as const;
+
+const OAuthDeviceFlowConfigSchema = z.object({
+  clientId: z.string(),
+  defaultPollingInterval: z.number().optional(),
+  deviceCodeEndpoint: z.string(),
+  scopes: z.array(z.string()),
+  tokenEndpoint: z.string(),
+  tokenExchangeEndpoint: z.string().optional(),
+});
+
 const AiProviderSettingsSchema = z.object({
+  authType: z.enum(AiProviderAuthTypes).optional(),
   defaultShowBrowserRequest: z.boolean().optional(),
   disableBrowserRequest: z.boolean().optional(),
   modelEditable: z.boolean().optional(),
+  oauthDeviceFlow: OAuthDeviceFlowConfigSchema.optional(),
   proxyUrl: z
     .object({
       desc: z.string().optional(),
@@ -247,7 +337,7 @@ export const UpdateAiProviderConfigSchema = z.object({
       z.string(),
       z.union([
         z.string().optional(),
-        z.record(z.string(), z.string()).optional(), // 支持嵌套对象，如 customHeaders
+        z.record(z.string(), z.string()).optional(), // Support nested objects, e.g. customHeaders
       ]),
     )
     .optional(),
@@ -289,5 +379,6 @@ export interface AiProviderRuntimeState {
   enabledAiProviders: EnabledProvider[];
   enabledChatAiProviders: EnabledProvider[];
   enabledImageAiProviders: EnabledProvider[];
+  enabledVideoAiProviders: EnabledProvider[];
   runtimeConfig: Record<string, AiProviderRuntimeConfig>;
 }

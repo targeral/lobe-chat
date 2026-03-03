@@ -1,10 +1,11 @@
+import type * as ModelBankModule from 'model-bank';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { genServerAiProvidersConfig } from './genServerAiProviderConfig';
 
 // Mock dependencies using importOriginal to preserve real provider data
 vi.mock('model-bank', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('model-bank')>();
+  const actual = await importOriginal<typeof ModelBankModule>();
   return {
     ...actual,
     // Keep the original exports but we can override specific ones if needed
@@ -19,7 +20,7 @@ vi.mock('@/envs/llm', () => ({
   })),
 }));
 
-vi.mock('@/utils/parseModels', () => ({
+vi.mock('@/utils/server/parseModels', () => ({
   extractEnabledModels: vi.fn(async (providerId: string, modelString?: string) => {
     if (!modelString) return undefined;
     return [`${providerId}-model-1`, `${providerId}-model-2`];
@@ -98,7 +99,7 @@ describe('genServerAiProvidersConfig', () => {
   it('should use environment variables for model lists', async () => {
     process.env.OPENAI_MODEL_LIST = '+gpt-4,+gpt-3.5-turbo';
 
-    const { extractEnabledModels } = vi.mocked(await import('@/utils/parseModels'));
+    const { extractEnabledModels } = vi.mocked(await import('@/utils/server/parseModels'));
     extractEnabledModels.mockResolvedValue(['gpt-4', 'gpt-3.5-turbo']);
 
     const result = await genServerAiProvidersConfig({});
@@ -116,7 +117,7 @@ describe('genServerAiProvidersConfig', () => {
 
     process.env.CUSTOM_OPENAI_MODELS = '+custom-model';
 
-    const { extractEnabledModels } = vi.mocked(await import('@/utils/parseModels'));
+    const { extractEnabledModels } = vi.mocked(await import('@/utils/server/parseModels'));
 
     await genServerAiProvidersConfig(specificConfig);
 
@@ -133,7 +134,7 @@ describe('genServerAiProvidersConfig', () => {
     process.env.OPENAI_MODEL_LIST = '+gpt-4->deployment1';
 
     const { extractEnabledModels, transformToAiModelList } = vi.mocked(
-      await import('@/utils/parseModels'),
+      await import('@/utils/server/parseModels'),
     );
 
     await genServerAiProvidersConfig(specificConfig);
@@ -206,7 +207,7 @@ describe('genServerAiProvidersConfig Error Handling', () => {
       getLLMConfig: vi.fn(() => ({})),
     }));
 
-    vi.doMock('@/utils/parseModels', () => ({
+    vi.doMock('@/utils/server/parseModels', () => ({
       extractEnabledModels: vi.fn(async () => undefined),
       transformToAiModelList: vi.fn(async () => []),
     }));

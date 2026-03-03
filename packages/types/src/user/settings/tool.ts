@@ -1,42 +1,11 @@
-import type { HumanInterventionConfig } from '../../tool';
+import type { UserInterventionConfig } from '../../tool';
 
 export interface UserToolConfig {
-  dalle: {
-    autoGenerate: boolean;
-  };
+  humanIntervention?: UserInterventionConfig;
   /**
-   * Human intervention configuration
+   * List of builtin tool identifiers that have been uninstalled by the user.
+   * By default, all builtin tools are enabled. Users can explicitly
+   * uninstall tools they don't want to use.
    */
-  humanIntervention?: {
-    /**
-     * List of confirmed tool calls (for 'once' policy)
-     * Format: "identifier/apiName" or "identifier/apiName#argsHash"
-     *
-     * Examples:
-     * - "web-browsing/crawlSinglePage"
-     * - "bash/bash#a1b2c3d4"
-     */
-    confirmed?: string[];
-
-    /**
-     * Whether human intervention is enabled globally
-     * @default true
-     */
-    enabled: boolean;
-
-    /**
-     * Per-tool intervention policy overrides
-     * Key format: "identifier/apiName"
-     *
-     * Example:
-     * {
-     *   "web-browsing/crawlSinglePage": "confirm",
-     *   "bash/bash": [
-     *     { match: { command: "git add:*" }, policy: "auto" },
-     *     { policy: "confirm" }
-     *   ]
-     * }
-     */
-    overrides?: Record<string, HumanInterventionConfig>;
-  };
+  uninstalledBuiltinTools?: string[];
 }

@@ -1,6 +1,6 @@
 # 🤯 LobeHub Desktop Application
 
-LobeHub Desktop is a cross-platform desktop application for [LobeChat](https://github.com/lobehub/lobe-chat), built with Electron, providing a more native desktop experience and functionality.
+LobeHub Desktop is a cross-platform desktop application for [LobeHub](https://github.com/lobehub/lobe-chat), built with Electron, providing a more native desktop experience and functionality.
 
 ## ✨ Features
 
@@ -11,7 +11,7 @@ LobeHub Desktop is a cross-platform desktop application for [LobeChat](https://g
 - **🔒 Secure & Reliable**: macOS notarized, encrypted token storage, secure OAuth flow
 - **📦 Multiple Release Channels**: Stable, beta, and nightly build versions
 - **⚡ Advanced Window Management**: Multi-window architecture with theme synchronization
-- **🔗 Remote Server Sync**: Secure data synchronization with remote LobeChat instances
+- **🔗 Remote Server Sync**: Secure data synchronization with remote LobeHub instances
 - **🎯 Developer Tools**: Built-in development panel and comprehensive debugging tools
 
 ## 🚀 Development Setup
@@ -29,10 +29,10 @@ LobeHub Desktop is a cross-platform desktop application for [LobeChat](https://g
 pnpm install-isolated
 
 # Start development server
-pnpm electron:dev
+pnpm dev
 
 # Type checking
-pnpm typecheck
+pnpm type-check
 
 # Run tests
 pnpm test
@@ -51,31 +51,32 @@ cp .env.desktop .env
 
 ### Build Commands
 
-| Command            | Description                             |
-| ------------------ | --------------------------------------- |
-| `pnpm build`       | Build for all platforms                 |
-| `pnpm build:mac`   | Build for macOS (Intel + Apple Silicon) |
-| `pnpm build:win`   | Build for Windows                       |
-| `pnpm build:linux` | Build for Linux                         |
-| `pnpm build-local` | Local development build                 |
+| Command                    | Description                                 |
+| -------------------------- | ------------------------------------------- |
+| `pnpm build:main`          | Build main/preload (dist output only)       |
+| `pnpm package:mac`         | Package for macOS (Intel + Apple Silicon)   |
+| `pnpm package:win`         | Package for Windows                         |
+| `pnpm package:linux`       | Package for Linux                           |
+| `pnpm package:local`       | Local packaging build (no ASAR)             |
+| `pnpm package:local:reuse` | Local packaging build reusing existing dist |
 
 ### Development Workflow
 
 ```bash
 # 1. Development
-pnpm electron:dev # Start with hot reload
+pnpm dev # Start with hot reload
 
 # 2. Code Quality
-pnpm lint      # ESLint checking
-pnpm format    # Prettier formatting
-pnpm typecheck # TypeScript validation
+pnpm lint       # ESLint checking
+pnpm format     # Prettier formatting
+pnpm type-check # TypeScript validation
 
 # 3. Testing
 pnpm test # Run Vitest tests
 
 # 4. Build & Package
-pnpm build       # Production build
-pnpm build-local # Local testing build
+pnpm build:main    # Production build (dist only)
+pnpm package:local # Local testing package
 ```
 
 ## 🎯 Release Channels
@@ -183,9 +184,16 @@ The `App.ts` class orchestrates the entire application lifecycle through key pha
 #### 🔌 Dependency Injection & Event System
 
 - **IoC Container** - WeakMap-based container for decorated controller methods
-- **Decorator Registration** - `@ipcClientEvent` and `@ipcServerEvent` decorators
+- **Typed IPC Decorators** - `@IpcMethod` wires controller methods into type-safe channels
 - **Automatic Event Mapping** - Events registered during controller loading
 - **Service Locator** - Type-safe service and controller retrieval
+
+##### 🧠 Type-Safe IPC Flow
+
+- **Async Context Propagation** - `src/main/utils/ipc/base.ts` captures the `IpcContext` with `AsyncLocalStorage`, so controller logic can call `getIpcContext()` anywhere inside an IPC handler without explicitly threading arguments.
+- **Service Constructors Registry** - `src/main/controllers/registry.ts` exports `controllerIpcConstructors` and `DesktopIpcServices`, enabling automatic typing of renderer IPC proxies.
+- **Renderer Proxy Helper** - `src/utils/electron/ipc.ts` exposes `ensureElectronIpc()` which lazily builds a proxy on top of `window.electronAPI.invoke`, giving React/Next.js code a type-safe API surface without exposing raw proxies in preload.
+- **Shared Typings Package** - `apps/desktop/src/main/exports.d.ts` augments `@lobechat/electron-client-ipc` so every package can consume `DesktopIpcServices` without importing desktop business code directly.
 
 #### 🪟 Window Management
 
@@ -235,6 +243,7 @@ The `App.ts` class orchestrates the entire application lifecycle through key pha
 
 #### 🎮 Controller Pattern
 
+- **Typed IPC Decorators** - Controllers extend `ControllerModule` and expose renderer methods via `@IpcMethod`
 - **IPC Event Handling** - Processes events from renderer with decorator-based registration
 - **Lifecycle Hooks** - `beforeAppReady` and `afterAppReady` for initialization phases
 - **Type-Safe Communication** - Strong typing for all IPC events and responses
@@ -255,6 +264,19 @@ The `App.ts` class orchestrates the entire application lifecycle through key pha
 - **Type-Safe Events** - TypeScript interfaces for all event parameters
 - **Context Awareness** - Events include sender context for window-specific operations
 - **Error Propagation** - Centralized error handling with proper status codes
+
+##### 🧩 Renderer IPC Helper
+
+Renderer code uses a lightweight proxy generated at runtime to keep IPC calls type-safe without exposing raw Electron objects through `contextBridge`. Use the helper exported from `src/utils/electron/ipc.ts` to access the main-process services:
+
+```ts
+import { ensureElectronIpc } from '@/utils/electron/ipc';
+
+const ipc = ensureElectronIpc();
+await ipc.windows.openSettingsWindow({ tab: 'provider' });
+```
+
+The helper internally builds a proxy on top of `window.electronAPI.invoke`, so no proxy objects need to be cloned across the preload boundary.
 
 #### 🛡️ Security Features
 
@@ -277,7 +299,7 @@ tests/                                       # Integration tests
 ```bash
 pnpm test       # Run all tests
 pnpm test:watch # Watch mode
-pnpm typecheck  # Type validation
+pnpm type-check # Type validation
 ```
 
 ### Test Coverage
@@ -325,7 +347,7 @@ Desktop application development involves complex cross-platform considerations a
 
 ### Contribution Process
 
-1. Fork the [LobeChat repository](https://github.com/lobehub/lobe-chat)
+1. Fork the [LobeHub repository](https://github.com/lobehub/lobe-chat)
 2. Set up the desktop development environment following our setup guide
 3. Make your changes to the desktop application
 4. Submit a Pull Request describing:

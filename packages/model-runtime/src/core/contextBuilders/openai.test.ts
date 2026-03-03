@@ -1,8 +1,8 @@
-import OpenAI from 'openai';
+import { imageUrlToBase64 } from '@lobechat/utils';
+import type OpenAI from 'openai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OpenAIChatMessage } from '../../types';
-import { imageUrlToBase64 } from '../../utils/imageToBase64';
+import type { OpenAIChatMessage } from '../../types';
 import { parseDataUri } from '../../utils/uriParser';
 import {
   convertImageUrlToFile,
@@ -12,7 +12,9 @@ import {
 } from './openai';
 
 // 模拟依赖
-vi.mock('../../utils/imageToBase64');
+vi.mock('@lobechat/utils', () => ({
+  imageUrlToBase64: vi.fn(),
+}));
 vi.mock('../../utils/uriParser');
 
 describe('convertMessageContent', () => {
@@ -70,6 +72,30 @@ describe('convertMessageContent', () => {
 
     expect(result).toEqual(content);
     expect(imageUrlToBase64).not.toHaveBeenCalled();
+  });
+
+  it('should convert image URL when forceImageBase64 is true', async () => {
+    process.env.LLM_VISION_IMAGE_USE_BASE64 = undefined;
+
+    const content = {
+      type: 'image_url',
+      image_url: { url: 'https://example.com/image.jpg' },
+    } as OpenAI.ChatCompletionContentPart;
+
+    vi.mocked(parseDataUri).mockReturnValue({ type: 'url', base64: null, mimeType: null });
+    vi.mocked(imageUrlToBase64).mockResolvedValue({
+      base64: 'forcedBase64',
+      mimeType: 'image/jpeg',
+    });
+
+    const result = await convertMessageContent(content, { forceImageBase64: true });
+
+    expect(result).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/jpeg;base64,forcedBase64' },
+    });
+
+    expect(imageUrlToBase64).toHaveBeenCalledWith('https://example.com/image.jpg');
   });
 });
 
@@ -147,6 +173,66 @@ describe('convertOpenAIMessages', () => {
     expect(result).toEqual(messages);
 
     expect(Promise.all).toHaveBeenCalledTimes(2); // 一次用于消息数组，一次用于内容数组
+  });
+
+  it('should filter out reasoning field from messages', async () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Hello',
+        reasoning: { content: 'some reasoning', duration: 100 },
+      },
+      { role: 'user', content: 'Hi' },
+    ] as any;
+
+    const result = await convertOpenAIMessages(messages);
+
+    expect(result).toEqual([
+      { role: 'assistant', content: 'Hello' },
+      { role: 'user', content: 'Hi' },
+    ]);
+    // Ensure reasoning field is removed
+    expect((result[0] as any).reasoning).toBeUndefined();
+  });
+
+  it('should preserve reasoning_content field from messages (for DeepSeek compatibility)', async () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Hello',
+        reasoning_content: 'some reasoning content',
+      },
+      { role: 'user', content: 'Hi' },
+    ] as any;
+
+    const result = await convertOpenAIMessages(messages);
+
+    expect(result).toEqual([
+      { role: 'assistant', content: 'Hello', reasoning_content: 'some reasoning content' },
+      { role: 'user', content: 'Hi' },
+    ]);
+    // Ensure reasoning_content field is preserved
+    expect((result[0] as any).reasoning_content).toBe('some reasoning content');
+  });
+
+  it('should filter out reasoning but preserve reasoning_content field', async () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: 'Hello',
+        reasoning: { content: 'some reasoning', duration: 100 },
+        reasoning_content: 'some reasoning content',
+      },
+    ] as any;
+
+    const result = await convertOpenAIMessages(messages);
+
+    expect(result).toEqual([
+      { role: 'assistant', content: 'Hello', reasoning_content: 'some reasoning content' },
+    ]);
+    // Ensure reasoning object is removed but reasoning_content is preserved
+    expect((result[0] as any).reasoning).toBeUndefined();
+    expect((result[0] as any).reasoning_content).toBe('some reasoning content');
   });
 });
 
@@ -309,6 +395,53 @@ describe('convertOpenAIResponseInputs', () => {
       { summary: [{ text: 'reasoning content', type: 'summary_text' }], type: 'reasoning' },
       { content: 'hello', role: 'assistant' },
       { content: '杭州天气如何', role: 'user' },
+    ]);
+  });
+
+  it('should handle openai and claude mixed message', async () => {
+    // See: https://github.com/lobehub/lobehub/pull/12017
+    const messages: OpenAIChatMessage[] = [
+      {
+        content: 'system prompts',
+        role: 'system',
+      },
+      {
+        content: '你是谁',
+        role: 'user',
+      },
+      {
+        content: [
+          {
+            signature: 'E',
+            thinking: 'thoughts',
+            type: 'thinking',
+          },
+          {
+            text: '我是 Claude',
+            type: 'text',
+          },
+        ],
+        role: 'assistant',
+        reasoning: {
+          content: 'The user is asking',
+          duration: 110,
+          // @ts-expect-error: ignore
+          signature: 'E',
+        },
+      },
+    ];
+    const result = await convertOpenAIResponseInputs(messages);
+    expect(result).toEqual([
+      { content: 'system prompts', role: 'developer' },
+      { content: '你是谁', role: 'user' },
+      {
+        summary: [{ text: 'The user is asking', type: 'summary_text' }],
+        type: 'reasoning',
+      },
+      {
+        content: [{ text: '我是 Claude', type: 'output_text' }],
+        role: 'assistant',
+      },
     ]);
   });
 });

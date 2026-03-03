@@ -1,7 +1,6 @@
+import { getBuiltinRender } from '@lobechat/builtin-tools/renders';
 import { safeParseJSON } from '@lobechat/utils';
 import { memo } from 'react';
-
-import { BuiltinToolsRenders } from '@/tools/renders';
 
 import { useParseContent } from '../useParseContent';
 
@@ -9,11 +8,18 @@ export interface BuiltinTypeProps {
   apiName?: string;
   arguments?: string;
   content: string;
-  id: string;
   identifier?: string;
   loading?: boolean;
+  /**
+   * The real message ID (tool message ID)
+   */
+  messageId?: string;
   pluginError?: any;
   pluginState?: any;
+  /**
+   * The tool call ID from the assistant message
+   */
+  toolCallId?: string;
 }
 
 const BuiltinType = memo<BuiltinTypeProps>(
@@ -21,14 +27,15 @@ const BuiltinType = memo<BuiltinTypeProps>(
     content,
     arguments: argumentsStr = '',
     pluginState,
-    id,
+    toolCallId,
+    messageId,
     identifier,
     pluginError,
     apiName,
   }) => {
     const { data } = useParseContent(content);
 
-    const Render = BuiltinToolsRenders[identifier || ''];
+    const Render = getBuiltinRender(identifier, apiName);
 
     if (!Render) return;
 
@@ -37,12 +44,13 @@ const BuiltinType = memo<BuiltinTypeProps>(
     return (
       <Render
         apiName={apiName}
-        args={args}
+        args={args || {}}
         content={data}
         identifier={identifier}
-        messageId={id}
+        messageId={messageId || toolCallId || ''}
         pluginError={pluginError}
         pluginState={pluginState}
+        toolCallId={toolCallId}
       />
     );
   },

@@ -2,11 +2,12 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { LobeChatDatabase } from '../../type';import { uuid } from '@/utils/uuid';
+import { uuid } from '@/utils/uuid';
 
+import { getTestDB } from '../../core/getTestDB';
 import { chunks, embeddings, fileChunks, files, unstructuredChunks, users } from '../../schemas';
+import type { LobeChatDatabase } from '../../type';
 import { ChunkModel } from '../chunk';
-import { getTestDB } from './_util';
 import { codeEmbedding, designThinkingQuery, designThinkingQuery2 } from './fixtures/embedding';
 
 const serverDB: LobeChatDatabase = await getTestDB();
@@ -287,6 +288,44 @@ describe('ChunkModel', () => {
       expect(result[1].index).toBe(1);
       expect(result[2].index).toBe(2);
     });
+
+    it('should handle chunks with null metadata and return undefined pageNumber', async () => {
+      const fileId = '1';
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values([{ text: 'Chunk with null metadata', userId, index: 0, metadata: null }])
+        .returning();
+
+      await serverDB.insert(fileChunks).values([{ fileId, chunkId: chunk.id, userId }]);
+
+      const result = await chunkModel.findByFileId(fileId, 0);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].metadata).toBeNull();
+      expect(result[0].pageNumber).toBeUndefined();
+    });
+
+    it('should handle chunks with metadata containing pageNumber', async () => {
+      const fileId = '1';
+      const [chunk] = await serverDB
+        .insert(chunks)
+        .values([
+          {
+            text: 'Chunk with pageNumber',
+            userId,
+            index: 0,
+            metadata: { pageNumber: 5 } as any,
+          },
+        ])
+        .returning();
+
+      await serverDB.insert(fileChunks).values([{ fileId, chunkId: chunk.id, userId }]);
+
+      const result = await chunkModel.findByFileId(fileId, 0);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].pageNumber).toBe(5);
+    });
   });
 
   describe('getChunksTextByFileId', () => {
@@ -503,7 +542,7 @@ content in Table html is below:
       const chunkResult = await serverDB
         .insert(chunks)
         .values(
-          Array(24)
+          Array.from({ length: 24 })
             .fill(0)
             .map((_, i) => ({ text: `Test Chunk ${i}`, userId })),
         )

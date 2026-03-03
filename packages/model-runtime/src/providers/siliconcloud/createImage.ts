@@ -1,11 +1,11 @@
+import { imageUrlToBase64 } from '@lobechat/utils';
 import createDebug from 'debug';
-import { RuntimeImageGenParamsValue } from 'model-bank';
+import type { RuntimeImageGenParamsValue } from 'model-bank';
 
-import { CreateImageOptions } from '../../core/openaiCompatibleFactory';
-import { CreateImagePayload, CreateImageResponse } from '../../types';
+import type { CreateImageOptions } from '../../core/openaiCompatibleFactory';
+import type { CreateImagePayload, CreateImageResponse } from '../../types';
 import { AgentRuntimeErrorType } from '../../types/error';
 import { AgentRuntimeError } from '../../utils/createError';
-import { imageUrlToBase64 } from '../../utils/imageToBase64';
 import { parseDataUri } from '../../utils/uriParser';
 
 const log = createDebug('lobe-image:siliconcloud');

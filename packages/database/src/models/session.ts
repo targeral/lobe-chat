@@ -1,42 +1,20 @@
 import { DEFAULT_AGENT_CONFIG, DEFAULT_INBOX_AVATAR, INBOX_SESSION_ID } from '@lobechat/const';
-import {
+import type {
   ChatSessionList,
   LobeAgentConfig,
   LobeAgentSession,
   LobeGroupSession,
   SessionRankItem,
 } from '@lobechat/types';
-import {
-  Column,
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gt,
-  inArray,
-  isNull,
-  like,
-  not,
-  or,
-  sql,
-} from 'drizzle-orm';
+import type { Column } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, like, not, or, sql } from 'drizzle-orm';
 import type { PartialDeep } from 'type-fest';
 
 import { merge } from '@/utils/merge';
 
-import {
-  AgentItem,
-  NewAgent,
-  NewSession,
-  SessionItem,
-  agents,
-  agentsToSessions,
-  sessionGroups,
-  sessions,
-  topics,
-} from '../schemas';
-import { LobeChatDatabase } from '../type';
+import type { AgentItem, NewAgent, NewSession, SessionItem } from '../schemas';
+import { agents, agentsToSessions, sessionGroups, sessions, topics } from '../schemas';
+import type { LobeChatDatabase } from '../type';
 import { genEndDateWhere, genRangeWhere, genStartDateWhere, genWhere } from '../utils/genWhere';
 import { idGenerator } from '../utils/idGenerator';
 
@@ -94,7 +72,7 @@ export class SessionModel {
   };
 
   queryWithGroups = async (): Promise<ChatSessionList> => {
-    // 查询所有会话
+    // Query all sessions
     const result = await this.query();
 
     const groups = await this.db.query.sessionGroups.findMany({
@@ -195,7 +173,7 @@ export class SessionModel {
       .limit(limit);
   };
 
-  // TODO: 未来将 Inbox id 入库后可以直接使用 _rank 方法
+  // TODO: In the future, once Inbox ID is stored in the database, we can directly use the _rank method
   rank = async (limit: number = 10): Promise<SessionRankItem[]> => {
     const inboxResult = await this.db
       .select({
@@ -256,6 +234,33 @@ export class SessionModel {
         if (existResult) return existResult;
       }
 
+      // Extract and properly map fields for agent creation from DiscoverAssistantDetail
+      const {
+        // MetaData fields (from discover assistant)
+        title,
+        description,
+        tags = [],
+        avatar,
+        backgroundColor,
+        // LobeAgentConfig fields
+        model,
+        params,
+        systemRole,
+        provider,
+        plugins,
+        openingMessage,
+        openingQuestions = [],
+        // TTS config
+        tts,
+        // Chat config
+        chatConfig,
+        // Field name mapping
+        examples, // maps to fewShots
+        identifier, // maps to marketIdentifier
+        marketIdentifier,
+        // Editor data
+        editorData,
+      } = config as any;
       if (type === 'group') {
         const result = await trx
           .insert(sessions)
@@ -276,9 +281,25 @@ export class SessionModel {
       const newAgents = await trx
         .insert(agents)
         .values({
-          ...config,
+          avatar,
+          backgroundColor,
+          chatConfig: chatConfig || {},
           createdAt: new Date(),
+          description,
+          editorData: editorData || null,
+          fewShots: examples || null, // Map examples to fewShots field
           id: idGenerator('agents'),
+          marketIdentifier: identifier || marketIdentifier,
+          model: typeof model === 'string' ? model : null,
+          openingMessage,
+          openingQuestions,
+          params: params || {},
+          plugins,
+          provider,
+          systemRole,
+          tags,
+          title,
+          tts: tts || {},
           updatedAt: new Date(),
           userId: this.userId,
         })
@@ -338,15 +359,14 @@ export class SessionModel {
 
     if (!result) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars,unused-imports/no-unused-vars
+    // eslint-disable-next-line unused-imports/no-unused-vars
     const { agent, clientId, ...session } = result;
     const sessionId = this.genId();
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { id: _, slug: __, ...config } = agent;
 
     return this.create({
-      config: config,
+      config,
       id: sessionId,
       session: {
         ...session,
@@ -485,7 +505,7 @@ export class SessionModel {
       );
     }
 
-    // 先处理参数字段：undefined 表示删除，null 表示禁用标记
+    // First process the params field: undefined means delete, null means disable flag
     const existingParams = session.agent.params ?? {};
     const updatedParams: Record<string, any> = { ...existingParams };
 
@@ -494,26 +514,26 @@ export class SessionModel {
       Object.keys(incomingParams).forEach((key) => {
         const incomingValue = incomingParams[key];
 
-        // undefined 代表显式删除该字段
+        // undefined means explicitly delete this field
         if (incomingValue === undefined) {
           delete updatedParams[key];
           return;
         }
 
-        // 其余值（包括 null）都直接覆盖，null 表示在前端禁用该参数
+        // All other values (including null) are directly overwritten, null means disable this param on the frontend
         updatedParams[key] = incomingValue;
       });
     }
 
-    // 构建要合并的数据，排除 params（单独处理）
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // Build data to be merged, excluding params (processed separately)
+
     const { params: _params, ...restData } = data;
     const mergedValue = merge(session.agent, restData);
 
-    // 应用处理后的参数
+    // Apply the processed parameters
     mergedValue.params = Object.keys(updatedParams).length > 0 ? updatedParams : undefined;
 
-    // 最终清理：确保没有 undefined 或 null 值进入数据库
+    // Final cleanup: ensure no undefined or null values enter the database
     if (mergedValue.params) {
       const params = mergedValue.params as Record<string, any>;
       Object.keys(params).forEach((key) => {
@@ -585,7 +605,7 @@ export class SessionModel {
     }
 
     // For agent sessions, include agent-specific fields
-    // TODO: 未来这里需要更好的实现方案，目前只取第一个
+    // TODO: Need a better implementation in the future, currently only taking the first one
     const agent = agentsToSessions?.[0]?.agent;
     return {
       ...res,
@@ -595,6 +615,8 @@ export class SessionModel {
         avatar: agent?.avatar ?? avatar ?? undefined,
         backgroundColor: agent?.backgroundColor ?? backgroundColor ?? undefined,
         description: agent?.description ?? description ?? undefined,
+
+        marketIdentifier: agent?.marketIdentifier ?? undefined,
         tags: agent?.tags ?? undefined,
         title: agent?.title ?? title ?? undefined,
       },
@@ -615,7 +637,8 @@ export class SessionModel {
       const results = await this.db.query.agents.findMany({
         limit: pageSize,
         offset,
-        orderBy: [desc(agents.updatedAt)],
+        // Keep deterministic ordering for keyword search results
+        orderBy: [asc(agents.id)],
         where: and(
           eq(agents.userId, this.userId),
           or(
@@ -629,7 +652,7 @@ export class SessionModel {
         with: { agentsToSessions: { columns: {}, with: { session: true } } },
       });
 
-      // 过滤和映射结果，确保有有效的 session 关联
+      // Filter and map results, ensuring valid session associations
       return (
         results
           .filter((item) => item.agentsToSessions && item.agentsToSessions.length > 0)

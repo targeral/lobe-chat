@@ -1,14 +1,24 @@
 /**
  * Tools Engineering - Unified tools processing using ToolsEngine
  */
+import { KnowledgeBaseManifest } from '@lobechat/builtin-tool-knowledge-base';
+import { MemoryManifest } from '@lobechat/builtin-tool-memory';
+import { WebBrowsingManifest } from '@lobechat/builtin-tool-web-browsing';
+import { defaultToolIds } from '@lobechat/builtin-tools';
+import { isDesktop } from '@lobechat/const';
+import { type PluginEnableChecker } from '@lobechat/context-engine';
 import { ToolsEngine } from '@lobechat/context-engine';
-import type { PluginEnableChecker } from '@lobechat/context-engine';
-import { ChatCompletionTool, WorkingModel } from '@lobechat/types';
-import { LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
+import { type ChatCompletionTool, type WorkingModel } from '@lobechat/types';
+import { type LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
 
+import { getAgentStoreState } from '@/store/agent';
+import { agentChatConfigSelectors, agentSelectors } from '@/store/agent/selectors';
 import { getToolStoreState } from '@/store/tool';
-import { pluginSelectors } from '@/store/tool/selectors';
-import { WebBrowsingManifest } from '@/tools/web-browsing';
+import {
+  klavisStoreSelectors,
+  lobehubSkillStoreSelectors,
+  pluginSelectors,
+} from '@/store/tool/selectors';
 
 import { getSearchConfig } from '../getSearchConfig';
 import { isCanUseFC } from '../isCanUseFC';
@@ -42,8 +52,26 @@ export const createToolsEngine = (config: ToolsEngineConfig = {}): ToolsEngine =
     (tool) => tool.manifest as LobeChatPluginManifest,
   );
 
+  // Get Klavis tool manifests
+  const klavisTools = klavisStoreSelectors.klavisAsLobeTools(toolStoreState);
+  const klavisManifests = klavisTools
+    .map((tool) => tool.manifest as LobeChatPluginManifest)
+    .filter(Boolean);
+
+  // Get LobeHub Skill tool manifests
+  const lobehubSkillTools = lobehubSkillStoreSelectors.lobehubSkillAsLobeTools(toolStoreState);
+  const lobehubSkillManifests = lobehubSkillTools
+    .map((tool) => tool.manifest as LobeChatPluginManifest)
+    .filter(Boolean);
+
   // Combine all manifests
-  const allManifests = [...pluginManifests, ...builtinManifests, ...additionalManifests];
+  const allManifests = [
+    ...pluginManifests,
+    ...builtinManifests,
+    ...klavisManifests,
+    ...lobehubSkillManifests,
+    ...additionalManifests,
+  ];
 
   return new ToolsEngine({
     defaultToolIds,
@@ -53,21 +81,45 @@ export const createToolsEngine = (config: ToolsEngineConfig = {}): ToolsEngine =
   });
 };
 
-export const createChatToolsEngine = (workingModel: WorkingModel) =>
+export const createAgentToolsEngine = (workingModel: WorkingModel) =>
   createToolsEngine({
-    // Add WebBrowsingManifest as default tool
-    defaultToolIds: [WebBrowsingManifest.identifier],
+    // Add default tools based on configuration
+    defaultToolIds,
     // Create search-aware enableChecker for this request
-    enableChecker: ({ pluginId }) => {
+    enableChecker: ({ pluginId, context }) => {
+      // Explicitly activated tools (via lobe-tools activateTools) bypass all filters
+      if (context?.isExplicitActivation) return true;
+
       // Check platform-specific constraints (e.g., LocalSystem desktop-only)
       if (!shouldEnableTool(pluginId)) {
         return false;
+      }
+
+      // Filter stdio MCP tools in non-desktop environments
+      // stdio transport requires Electron IPC and cannot work on web
+      if (!isDesktop) {
+        const plugin = pluginSelectors.getInstalledPluginById(pluginId)(getToolStoreState());
+        if (plugin?.customParams?.mcp?.type === 'stdio') {
+          return false;
+        }
       }
 
       // For WebBrowsingManifest, apply search logic
       if (pluginId === WebBrowsingManifest.identifier) {
         const searchConfig = getSearchConfig(workingModel.model, workingModel.provider);
         return searchConfig.useApplicationBuiltinSearchTool;
+      }
+
+      // For KnowledgeBaseManifest, only enable if knowledge is enabled
+      if (pluginId === KnowledgeBaseManifest.identifier) {
+        const agentState = getAgentStoreState();
+
+        return agentSelectors.hasEnabledKnowledgeBases(agentState);
+      }
+
+      // For MemoryManifest, check per-agent memory tool toggle
+      if (pluginId === MemoryManifest.identifier) {
+        return agentChatConfigSelectors.isMemoryToolEnabled(getAgentStoreState());
       }
 
       // For all other plugins, enable by default
@@ -92,8 +144,8 @@ export const getEnabledTools = (
 
   return (
     toolsEngine.generateTools({
-      model: model, // Use provided model or fallback
-      provider: provider, // Use provided provider or fallback
+      model, // Use provided model or fallback
+      provider, // Use provided provider or fallback
       toolIds,
     }) || []
   );

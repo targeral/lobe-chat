@@ -1,5 +1,6 @@
-import debug from 'debug';
 import fs from 'node:fs/promises';
+
+import debug from 'debug';
 import mammoth from 'mammoth';
 
 import type { DocumentPage, FileLoaderInterface } from '../../types';

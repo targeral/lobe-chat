@@ -1,11 +1,13 @@
 import type { ChatModelCard } from '@lobechat/types';
+import { imageUrlToBase64 } from '@lobechat/utils';
 import { ModelProvider } from 'model-bank';
-import { Ollama, Tool } from 'ollama/browser';
-import { ClientOptions } from 'openai';
+import type { Tool } from 'ollama/browser';
+import { Ollama } from 'ollama/browser';
+import type { ClientOptions } from 'openai';
 
-import { LobeRuntimeAI } from '../../core/BaseAI';
-import { OllamaStream, convertIterableToStream, createModelPullStream } from '../../core/streams';
-import {
+import type { LobeRuntimeAI } from '../../core/BaseAI';
+import { convertIterableToStream, createModelPullStream, OllamaStream } from '../../core/streams';
+import type {
   ChatMethodOptions,
   ChatStreamPayload,
   Embeddings,
@@ -20,7 +22,7 @@ import { debugStream } from '../../utils/debugStream';
 import { createErrorResponse } from '../../utils/errorResponse';
 import { StreamingResponse } from '../../utils/response';
 import { parseDataUri } from '../../utils/uriParser';
-import { OllamaMessage } from './type';
+import type { OllamaMessage } from './type';
 
 export interface OllamaModelCard {
   name: string;
@@ -61,7 +63,7 @@ export class LobeOllamaAI implements LobeRuntimeAI {
       options?.signal?.addEventListener('abort', abort);
 
       const response = await this.client.chat({
-        messages: this.buildOllamaMessages(payload.messages),
+        messages: await this.buildOllamaMessages(payload.messages),
         model: payload.model,
         options: {
           frequency_penalty: payload.frequency_penalty,
@@ -169,11 +171,13 @@ export class LobeOllamaAI implements LobeRuntimeAI {
     }
   };
 
-  private buildOllamaMessages(messages: OpenAIChatMessage[]) {
-    return messages.map((message) => this.convertContentToOllamaMessage(message));
+  private async buildOllamaMessages(messages: OpenAIChatMessage[]) {
+    return Promise.all(messages.map((message) => this.convertContentToOllamaMessage(message)));
   }
 
-  private convertContentToOllamaMessage = (message: OpenAIChatMessage): OllamaMessage => {
+  private convertContentToOllamaMessage = async (
+    message: OpenAIChatMessage,
+  ): Promise<OllamaMessage> => {
     if (typeof message.content === 'string') {
       return { content: message.content, role: message.role };
     }
@@ -183,6 +187,9 @@ export class LobeOllamaAI implements LobeRuntimeAI {
       role: message.role,
     };
 
+    // Collect image processing tasks for parallel execution
+    const imagePromises: Array<Promise<string | null> | string> = [];
+
     for (const content of message.content) {
       switch (content.type) {
         case 'text': {
@@ -191,13 +198,31 @@ export class LobeOllamaAI implements LobeRuntimeAI {
           break;
         }
         case 'image_url': {
-          const { base64 } = parseDataUri(content.image_url.url);
+          const { base64, type } = parseDataUri(content.image_url.url);
+
+          // If already base64 format, use it directly
           if (base64) {
-            ollamaMessage.images ??= [];
-            ollamaMessage.images.push(base64);
+            imagePromises.push(base64);
+          }
+          // If it's a URL, add async conversion task with error handling
+          else if (type === 'url') {
+            imagePromises.push(
+              imageUrlToBase64(content.image_url.url)
+                .then((result) => result.base64)
+                .catch(() => null), // Silently ignore failed conversions
+            );
           }
           break;
         }
+      }
+    }
+
+    // Process all images in parallel and filter out failed conversions
+    if (imagePromises.length > 0) {
+      const results = await Promise.all(imagePromises);
+      const validImages = results.filter((img): img is string => img !== null);
+      if (validImages.length > 0) {
+        ollamaMessage.images = validImages;
       }
     }
 
@@ -206,45 +231,44 @@ export class LobeOllamaAI implements LobeRuntimeAI {
 
   async pullModel(params: PullModelParams, options?: ModelRequestOptions): Promise<Response> {
     const { model, insecure } = params;
-    const signal = options?.signal; // 获取传入的 AbortSignal
+    const signal = options?.signal; // Get the passed-in AbortSignal
 
-    // eslint-disable-next-line unicorn/consistent-function-scoping
     const abortOllama = () => {
-      // 假设 this.client.abort() 是幂等的或者可以安全地多次调用
+      // Assume this.client.abort() is idempotent or can be safely called multiple times
       this.client.abort();
     };
 
-    // 如果有 AbortSignal，监听 abort 事件
-    // 使用 { once: true } 确保监听器只触发一次
+    // If an AbortSignal is present, listen for the abort event
+    // Use { once: true } to ensure the listener only fires once
     signal?.addEventListener('abort', abortOllama, { once: true });
 
     try {
-      // 获取 Ollama pull 的迭代器
+      // Get the iterable for the Ollama pull operation
       const iterable = await this.client.pull({
         insecure: insecure ?? false,
         model,
         stream: true,
       });
 
-      // 使用专门的模型下载流转换方法
+      // Use the dedicated model download stream conversion method
       const progressStream = createModelPullStream(iterable, model, {
         onCancel: () => {
-          // 当流被取消时，调用 abortOllama
-          // 移除 signal 的监听器，避免重复调用（如果 abortOllama 不是幂等的）
+          // When the stream is cancelled, call abortOllama
+          // Remove the signal's event listener to avoid duplicate calls (if abortOllama is not idempotent)
           signal?.removeEventListener('abort', abortOllama);
-          abortOllama(); // 执行中止逻辑
+          abortOllama(); // Execute the abort logic
         },
       });
 
-      // 返回标准响应
+      // Return the standard response
       return new Response(progressStream, {
         headers: { 'Content-Type': 'application/json' },
       });
     } catch (error) {
-      // 如果在调用 client.pull 或创建流的初始阶段出错，需要移除监听器
+      // If an error occurs during the initial call to client.pull or stream creation, remove the listener
       signal?.removeEventListener('abort', abortOllama);
 
-      // 处理错误
+      // Handle errors
       if ((error as Error).message === 'fetch failed') {
         return createErrorResponse(AgentRuntimeErrorType.OllamaServiceUnavailable, {
           message: 'please check whether your ollama service is available',
@@ -254,7 +278,7 @@ export class LobeOllamaAI implements LobeRuntimeAI {
 
       console.error('model download error:', error);
 
-      // 检查是否是取消操作
+      // Check if the operation was cancelled
       if ((error as Error).name === 'AbortError') {
         return new Response(
           JSON.stringify({
@@ -268,7 +292,7 @@ export class LobeOllamaAI implements LobeRuntimeAI {
         );
       }
 
-      // 返回错误响应
+      // Return an error response
       const errorMessage = error instanceof Error ? error.message : String(error);
       return new Response(
         JSON.stringify({

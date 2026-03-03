@@ -184,7 +184,7 @@ export const resolveParameters = (
   if (hasConflict) {
     if (preferTemperature && shouldSetTemperature) {
       // Set temperature only
-      let finalTemp =
+      const finalTemp =
         normalizeTemperature && temperature !== undefined ? temperature / 2 : temperature;
       result.temperature = applyRangeConstraint(finalTemp, temperatureRange);
     } else if (shouldSetTopP) {
@@ -194,7 +194,7 @@ export const resolveParameters = (
   } else {
     // No conflict: set both parameters if provided
     if (shouldSetTemperature) {
-      let finalTemp =
+      const finalTemp =
         normalizeTemperature && temperature !== undefined ? temperature / 2 : temperature;
       result.temperature = applyRangeConstraint(finalTemp, temperatureRange);
     }
@@ -238,42 +238,4 @@ export const createParameterResolver = (options: ParameterResolverOptions) => {
   return (config: ParameterConfig): ResolvedParameters => {
     return resolveParameters(config, options);
   };
-};
-
-/**
- * Common model sets that have parameter conflicts
- */
-export const MODEL_PARAMETER_CONFLICTS = {
-  /**
-   * Claude models after Opus 4.1 that don't allow both temperature and top_p
-   */
-  ANTHROPIC_CLAUDE_4_PLUS: new Set([
-    'claude-opus-4-1',
-    'claude-opus-4-1-20250805',
-    'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-  ]),
-
-  /**
-   * Bedrock Claude 4+ models (including Bedrock-specific model IDs)
-   */
-  BEDROCK_CLAUDE_4_PLUS: new Set([
-    'claude-opus-4-1',
-    'claude-opus-4-1-20250805',
-    'claude-opus-4-20250514',
-    'claude-sonnet-4-20250514',
-    'claude-sonnet-4-5-20250929',
-    'claude-haiku-4-5-20251001',
-    // Bedrock model IDs
-    'anthropic.claude-opus-4-1-20250805-v1:0',
-    'us.anthropic.claude-opus-4-1-20250805-v1:0',
-    'anthropic.claude-opus-4-20250514-v1:0',
-    'us.anthropic.claude-opus-4-20250514-v1:0',
-    'anthropic.claude-sonnet-4-20250514-v1:0',
-    'us.anthropic.claude-sonnet-4-20250514-v1:0',
-    'anthropic.claude-sonnet-4-5-20250929-v1:0',
-    'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    'anthropic.claude-haiku-4-5-20251001-v1:0',
-    'us.anthropic.claude-haiku-4-5-20251001-v1:0',
-  ]),
 };

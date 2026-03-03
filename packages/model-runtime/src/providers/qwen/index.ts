@@ -51,11 +51,11 @@ export const LobeQwenAI = createOpenAICompatibleRuntime({
               thinking_budget:
                 thinking?.budget_tokens === 0 ? 0 : thinking?.budget_tokens || undefined,
             }
-          : ['qwen3', 'qwen-turbo', 'qwen-plus', 'deepseek-v3.1'].some((keyword) =>
-                model.toLowerCase().includes(keyword),
-              )
+          : thinking
             ? {
-                enable_thinking: thinking !== undefined ? thinking.type === 'enabled' : false,
+                ...(thinking.type !== undefined && {
+                  enable_thinking: thinking.type === 'enabled',
+                }),
                 thinking_budget:
                   thinking?.budget_tokens === 0 ? 0 : thinking?.budget_tokens || undefined,
               }

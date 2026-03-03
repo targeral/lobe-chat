@@ -20,6 +20,161 @@ testProvider({
 });
 
 describe('LobeDeepSeekAI - custom features', () => {
+  describe('chatCompletion.handlePayload', () => {
+    it('should transform reasoning object to reasoning_content string', () => {
+      const payload = {
+        messages: [
+          { role: 'user', content: 'Hello' },
+          {
+            role: 'assistant',
+            content: 'Hi there',
+            reasoning: { content: 'Let me think...', duration: 1000 },
+          },
+          { role: 'user', content: 'How are you?' },
+        ],
+        model: 'deepseek-r1',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.messages).toEqual([
+        { role: 'user', content: 'Hello' },
+        {
+          role: 'assistant',
+          content: 'Hi there',
+          reasoning_content: 'Let me think...',
+        },
+        { role: 'user', content: 'How are you?' },
+      ]);
+    });
+
+    it('should not modify messages without reasoning field', () => {
+      const payload = {
+        messages: [
+          { role: 'user', content: 'Hello' },
+          { role: 'assistant', content: 'Hi there' },
+        ],
+        model: 'deepseek-chat',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.messages).toEqual(payload.messages);
+    });
+
+    it('should handle empty reasoning content', () => {
+      const payload = {
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Response',
+            reasoning: { duration: 1000 },
+          },
+        ],
+        model: 'deepseek-r1',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.messages[0]).toEqual({
+        role: 'assistant',
+        content: 'Response',
+      });
+    });
+
+    it('should set stream to true by default', () => {
+      const payload = {
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'deepseek-chat',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.stream).toBe(true);
+    });
+
+    it('should preserve existing stream value', () => {
+      const payload = {
+        messages: [{ role: 'user', content: 'Hello' }],
+        model: 'deepseek-chat',
+        stream: false,
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.stream).toBe(false);
+    });
+
+    it('should add empty reasoning_content for assistant messages in deepseek-reasoner', () => {
+      const payload = {
+        messages: [
+          { role: 'user', content: 'Search weather' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: {
+                  name: 'search',
+                  arguments: '{"q":"weather"}',
+                },
+              },
+            ],
+          },
+          { role: 'tool', content: '{"result":"sunny"}', tool_call_id: 'call_1' },
+        ],
+        model: 'deepseek-reasoner',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.messages).toEqual([
+        { role: 'user', content: 'Search weather' },
+        {
+          role: 'assistant',
+          content: '',
+          reasoning_content: '',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: {
+                name: 'search',
+                arguments: '{"q":"weather"}',
+              },
+            },
+          ],
+        },
+        { role: 'tool', content: '{"result":"sunny"}', tool_call_id: 'call_1' },
+      ]);
+    });
+
+    it('should preserve existing reasoning_content for deepseek-reasoner assistant messages', () => {
+      const payload = {
+        messages: [
+          {
+            role: 'assistant',
+            content: 'Previous answer',
+            reasoning_content: 'existing reasoning',
+          },
+        ],
+        model: 'deepseek-reasoner',
+      };
+
+      const result = params.chatCompletion!.handlePayload!(payload as any);
+
+      expect(result.messages).toEqual([
+        {
+          role: 'assistant',
+          content: 'Previous answer',
+          reasoning_content: 'existing reasoning',
+        },
+      ]);
+    });
+  });
+
   describe('Debug Configuration', () => {
     it('should disable debug by default', () => {
       delete process.env.DEBUG_DEEPSEEK_CHAT_COMPLETION;

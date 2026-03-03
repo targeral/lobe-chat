@@ -3,7 +3,7 @@ import urlJoin from 'url-join';
 
 import { responsesAPIModels } from '../../const/models';
 import { createRouterRuntime } from '../../core/RouterRuntime';
-import { CreateRouterRuntimeOptions } from '../../core/RouterRuntime/createRuntime';
+import type { CreateRouterRuntimeOptions } from '../../core/RouterRuntime/createRuntime';
 import { detectModelProvider, processMultiProviderModelList } from '../../utils/modelParse';
 
 export interface AiHubMixModelCard {
@@ -57,6 +57,11 @@ export const params: CreateRouterRuntimeOptions = {
       models: LOBE_DEFAULT_MODEL_LIST.map((m) => m.id).filter(
         (id) => detectModelProvider(id) === 'xai',
       ),
+      options: { baseURL: urlJoin(baseURL, '/v1') },
+    },
+    {
+      apiType: 'deepseek',
+      models: ['deepseek-chat', 'deepseek-reasoner'],
       options: { baseURL: urlJoin(baseURL, '/v1') },
     },
     {

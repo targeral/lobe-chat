@@ -1,17 +1,26 @@
-import OpenAI, { toFile } from 'openai';
+import { imageUrlToBase64 } from '@lobechat/utils';
+import type OpenAI from 'openai';
+import { toFile } from 'openai';
 
 import { disableStreamModels, systemToUserModels } from '../../const/models';
-import { ChatStreamPayload, OpenAIChatMessage } from '../../types';
-import { imageUrlToBase64 } from '../../utils/imageToBase64';
+import type { ChatStreamPayload, OpenAIChatMessage } from '../../types';
 import { parseDataUri } from '../../utils/uriParser';
+
+type ConvertMessageContentOptions = {
+  forceImageBase64?: boolean;
+};
 
 export const convertMessageContent = async (
   content: OpenAI.ChatCompletionContentPart,
+  options?: ConvertMessageContentOptions,
 ): Promise<OpenAI.ChatCompletionContentPart> => {
   if (content.type === 'image_url') {
     const { type } = parseDataUri(content.image_url.url);
 
-    if (type === 'url' && process.env.LLM_VISION_IMAGE_USE_BASE64 === '1') {
+    const shouldUseBase64 =
+      options?.forceImageBase64 || process.env.LLM_VISION_IMAGE_USE_BASE64 === '1';
+
+    if (type === 'url' && shouldUseBase64) {
       const { base64, mimeType } = await imageUrlToBase64(content.image_url.url);
 
       return {
@@ -24,24 +33,49 @@ export const convertMessageContent = async (
   return content;
 };
 
-export const convertOpenAIMessages = async (messages: OpenAI.ChatCompletionMessageParam[]) => {
+export const convertOpenAIMessages = async (
+  messages: OpenAI.ChatCompletionMessageParam[],
+  options?: ConvertMessageContentOptions,
+) => {
   return (await Promise.all(
-    messages.map(async (message) => ({
-      ...message,
-      content:
-        typeof message.content === 'string'
-          ? message.content
-          : await Promise.all(
-              (message.content || []).map((c) =>
-                convertMessageContent(c as OpenAI.ChatCompletionContentPart),
+    messages.map(async (message) => {
+      const msg = message as any;
+
+      // Explicitly map only valid ChatCompletionMessageParam fields
+      // Exclude reasoning and reasoning_content fields as they should not be sent in requests
+      const result: any = {
+        content:
+          typeof message.content === 'string'
+            ? message.content
+            : await Promise.all(
+                (message.content || []).map((c) =>
+                  convertMessageContent(c as OpenAI.ChatCompletionContentPart, options),
+                ),
               ),
-            ),
-    })),
+        role: msg.role,
+      };
+
+      // Add optional fields if they exist
+      if (msg.name !== undefined) result.name = msg.name;
+      if (msg.tool_calls !== undefined) result.tool_calls = msg.tool_calls;
+      if (msg.tool_call_id !== undefined) result.tool_call_id = msg.tool_call_id;
+      if (msg.function_call !== undefined) result.function_call = msg.function_call;
+
+      // it's compatible for DeepSeek & Moonshot
+      if (msg.reasoning_content !== undefined) result.reasoning_content = msg.reasoning_content;
+      // MiniMax uses reasoning_details for historical thinking, so forward it unchanged
+      if (msg.reasoning_details !== undefined) result.reasoning_details = msg.reasoning_details;
+
+      return result;
+    }),
   )) as OpenAI.ChatCompletionMessageParam[];
 };
 
-export const convertOpenAIResponseInputs = async (messages: OpenAIChatMessage[]) => {
-  let input: OpenAI.Responses.ResponseInputItem[] = [];
+export const convertOpenAIResponseInputs = async (
+  messages: OpenAIChatMessage[],
+  options?: ConvertMessageContentOptions,
+) => {
+  const input: OpenAI.Responses.ResponseInputItem[] = [];
   await Promise.all(
     messages.map(async (message) => {
       // if message has reasoning, add it as a separate reasoning item
@@ -83,24 +117,37 @@ export const convertOpenAIResponseInputs = async (messages: OpenAIChatMessage[])
 
       // default item
       // also need handle image
+
+      const processedContent =
+        typeof message.content === 'string'
+          ? message.content
+          : await Promise.all(
+              (message.content || []).map(async (c) => {
+                if (c.type === 'text') {
+                  // if assistant message, set type to output_text
+                  // https://platform.openai.com/docs/guides/text
+                  if (message.role === 'assistant') {
+                    return { ...c, type: 'output_text' };
+                  }
+                  return { ...c, type: 'input_text' };
+                }
+                const image = await convertMessageContent(c as OpenAI.ChatCompletionContentPart);
+                if (!(image as OpenAI.ChatCompletionContentPartImage).image_url?.url) {
+                  return undefined;
+                }
+                return {
+                  image_url: (image as OpenAI.ChatCompletionContentPartImage).image_url?.url,
+                  type: 'input_image',
+                };
+              }),
+            );
+
       const item = {
         ...message,
         content:
-          typeof message.content === 'string'
-            ? message.content
-            : await Promise.all(
-                (message.content || []).map(async (c) => {
-                  if (c.type === 'text') {
-                    return { ...c, type: 'input_text' };
-                  }
-
-                  const image = await convertMessageContent(c as OpenAI.ChatCompletionContentPart);
-                  return {
-                    image_url: (image as OpenAI.ChatCompletionContentPartImage).image_url?.url,
-                    type: 'input_image',
-                  };
-                }),
-              ),
+          typeof processedContent === 'string'
+            ? processedContent
+            : processedContent.filter((m) => m !== undefined),
       } as OpenAI.Responses.ResponseInputItem;
 
       // remove reasoning field from the message item
@@ -116,6 +163,10 @@ export const convertOpenAIResponseInputs = async (messages: OpenAIChatMessage[])
 export const pruneReasoningPayload = (payload: ChatStreamPayload) => {
   const shouldStream = !disableStreamModels.has(payload.model);
   const { stream_options, ...cleanedPayload } = payload as any;
+
+  // When reasoning_effort is 'none', allow user-defined temperature/top_p
+  const effort = payload.reasoning?.effort || payload.reasoning_effort;
+  const isEffortNone = effort === 'none';
 
   return {
     ...cleanedPayload,
@@ -133,8 +184,14 @@ export const pruneReasoningPayload = (payload: ChatStreamPayload) => {
     stream: shouldStream,
     // Only include stream_options when stream is enabled
     ...(shouldStream && stream_options && { stream_options }),
-    temperature: 1,
-    top_p: 1,
+
+    /**
+     *  In openai docs: https://platform.openai.com/docs/guides/latest-model#gpt-5-2-parameter-compatibility
+     *  Fields like `top_p`, `temperature` and `logprobs` only supported to
+     *  GPT-5 series (e.g. 5-mini 5-nano ) when reasoning effort is none
+     */
+    temperature: isEffortNone ? payload.temperature : undefined,
+    top_p: isEffortNone ? payload.top_p : undefined,
   };
 };
 

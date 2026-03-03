@@ -1,111 +1,154 @@
+import { CloudSandboxIdentifier } from '@lobechat/builtin-tool-cloud-sandbox';
 import {
-  CodeInterpreterFileItem,
-  CodeInterpreterParams,
-  CodeInterpreterResponse,
+  type CodeInterpreterFileItem,
+  type CodeInterpreterParams,
+  type CodeInterpreterResponse,
 } from '@lobechat/types';
+import debug from 'debug';
 import { produce } from 'immer';
 import pMap from 'p-map';
-import { SWRResponse } from 'swr';
-import { StateCreator } from 'zustand/vanilla';
+import { type SWRResponse } from 'swr';
 
 import { useClientDataSWR } from '@/libs/swr';
 import { fileService } from '@/services/file';
 import { pythonService } from '@/services/python';
 import { dbMessageSelectors } from '@/store/chat/selectors';
-import { ChatStore } from '@/store/chat/store';
+import { type ChatStore } from '@/store/chat/store';
 import { useFileStore } from '@/store/file';
-import { CodeInterpreterIdentifier } from '@/tools/code-interpreter';
+import { type StoreSetter } from '@/store/types';
 import { setNamespace } from '@/utils/storeDebug';
 
 const n = setNamespace('codeInterpreter');
+const log = debug('lobe-store:builtin-tool');
 
 const SWR_FETCH_INTERPRETER_FILE_KEY = 'FetchCodeInterpreterFileItem';
 
-export interface ChatCodeInterpreterAction {
-  python: (id: string, params: CodeInterpreterParams) => Promise<boolean | undefined>;
-  toggleInterpreterExecuting: (id: string, loading: boolean) => void;
-  updateInterpreterFileItem: (
-    id: string,
-    updater: (data: CodeInterpreterResponse) => void,
-  ) => Promise<void>;
-  uploadInterpreterFiles: (id: string, files: CodeInterpreterFileItem[]) => Promise<void>;
-  useFetchInterpreterFileItem: (id?: string) => SWRResponse;
-}
+type Setter = StoreSetter<ChatStore>;
+export const codeInterpreterSlice = (set: Setter, get: () => ChatStore, _api?: unknown) =>
+  new ChatCodeInterpreterActionImpl(set, get, _api);
 
-export const codeInterpreterSlice: StateCreator<
-  ChatStore,
-  [['zustand/devtools', never]],
-  [],
-  ChatCodeInterpreterAction
-> = (set, get) => ({
-  python: async (id: string, params: CodeInterpreterParams) => {
-    const {
-      toggleInterpreterExecuting,
-      optimisticUpdatePluginState,
-      optimisticUpdateMessageContent,
-      uploadInterpreterFiles,
-    } = get();
+export class ChatCodeInterpreterActionImpl {
+  readonly #get: () => ChatStore;
+  readonly #set: Setter;
 
-    toggleInterpreterExecuting(id, true);
+  constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
+    void _api;
+    this.#set = set;
+    this.#get = get;
+  }
 
-    // TODO: 应该只下载 AI 用到的文件
-    const files: File[] = [];
-    for (const message of dbMessageSelectors.dbUserMessages(get())) {
-      for (const file of message.fileList ?? []) {
-        const blob = await fetch(file.url).then((res) => res.blob());
-        files.push(new File([blob], file.name));
-      }
-      for (const image of message.imageList ?? []) {
-        const blob = await fetch(image.url).then((res) => res.blob());
-        files.push(new File([blob], image.alt));
-      }
-      for (const tool of message.tools ?? []) {
-        if (tool.identifier === CodeInterpreterIdentifier) {
-          const message = dbMessageSelectors.getDbMessageByToolCallId(tool.id)(get());
-          if (message?.content) {
-            const content = JSON.parse(message.content) as CodeInterpreterResponse;
-            for (const file of content.files ?? []) {
-              const item = await fileService.getFile(file.fileId!);
-              const blob = await fetch(item.url).then((res) => res.blob());
-              files.push(new File([blob], file.filename));
+  python = async (id: string, params: CodeInterpreterParams): Promise<boolean | undefined> => {
+    // Get parent operationId from messageOperationMap (should be executeToolCall)
+    const parentOperationId = this.#get().messageOperationMap[id];
+
+    // Create child operation for interpreter execution
+    // Auto-associates message with this operation via messageId in context
+    const { operationId: interpreterOpId, abortController } = this.#get().startOperation({
+      context: {
+        messageId: id,
+      },
+      metadata: {
+        startTime: Date.now(),
+      },
+      parentOperationId,
+      type: 'builtinToolInterpreter',
+    });
+
+    log(
+      '[python] messageId=%s, parentOpId=%s, interpreterOpId=%s, aborted=%s',
+      id,
+      parentOperationId,
+      interpreterOpId,
+      abortController.signal.aborted,
+    );
+
+    const context = { operationId: interpreterOpId };
+
+    try {
+      // TODO: should only download files used by the AI
+      const files: File[] = [];
+      for (const message of dbMessageSelectors.dbUserMessages(this.#get())) {
+        for (const file of message.fileList ?? []) {
+          const blob = await fetch(file.url).then((res) => res.blob());
+          files.push(new File([blob], file.name));
+        }
+        for (const image of message.imageList ?? []) {
+          const blob = await fetch(image.url).then((res) => res.blob());
+          files.push(new File([blob], image.alt));
+        }
+        for (const tool of message.tools ?? []) {
+          if (tool.identifier === CloudSandboxIdentifier) {
+            const message = dbMessageSelectors.getDbMessageByToolCallId(tool.id)(this.#get());
+            if (message?.content) {
+              const content = JSON.parse(message.content) as CodeInterpreterResponse;
+              for (const file of content.files ?? []) {
+                const item = await fileService.getFile(file.fileId!);
+                const blob = await fetch(item.url).then((res) => res.blob());
+                files.push(new File([blob], file.filename));
+              }
             }
           }
         }
       }
-    }
 
-    try {
       const result = await pythonService.runPython(params.code, params.packages, files);
+
+      // Complete interpreter operation
+      this.#get().completeOperation(interpreterOpId);
+
       if (result?.files) {
-        await optimisticUpdateMessageContent(id, JSON.stringify(result));
-        await uploadInterpreterFiles(id, result.files);
+        await this.#get().optimisticUpdateMessageContent(
+          id,
+          JSON.stringify(result),
+          undefined,
+          context,
+        );
+        await this.#get().uploadInterpreterFiles(id, result.files);
       } else {
-        await optimisticUpdateMessageContent(id, JSON.stringify(result));
+        await this.#get().optimisticUpdateMessageContent(
+          id,
+          JSON.stringify(result),
+          undefined,
+          context,
+        );
       }
+
+      return true;
     } catch (error) {
-      optimisticUpdatePluginState(id, { error });
-      // 如果调用过程中出现了错误，不要触发 AI 消息
+      const err = error as Error;
+
+      log('[python] Error: messageId=%s, error=%s', id, err.message);
+
+      // Check if it's an abort error
+      if (err.message.includes('The user aborted a request.') || err.name === 'AbortError') {
+        log('[python] Request aborted: messageId=%s', id);
+        // Fail interpreter operation for abort
+        this.#get().failOperation(interpreterOpId, {
+          message: 'User cancelled the request',
+          type: 'UserAborted',
+        });
+        // Don't update error message for user aborts
+        return;
+      }
+
+      // Fail interpreter operation for other errors
+      this.#get().failOperation(interpreterOpId, {
+        message: err.message,
+        type: 'PluginServerError',
+      });
+
+      // For other errors, update message
+      await this.#get().optimisticUpdatePluginState(id, { error }, context);
+      // If an error occurred during the call, do not trigger the AI message
       return;
-    } finally {
-      toggleInterpreterExecuting(id, false);
     }
+  };
 
-    return true;
-  },
-
-  toggleInterpreterExecuting: (id: string, executing: boolean) => {
-    set(
-      { codeInterpreterExecuting: { ...get().codeInterpreterExecuting, [id]: executing } },
-      false,
-      n('toggleInterpreterExecuting'),
-    );
-  },
-
-  updateInterpreterFileItem: async (
+  updateInterpreterFileItem = async (
     id: string,
     updater: (data: CodeInterpreterResponse) => void,
-  ) => {
-    const message = dbMessageSelectors.getDbMessageById(id)(get());
+  ): Promise<void> => {
+    const message = dbMessageSelectors.getDbMessageById(id)(this.#get());
     if (!message) return;
 
     const result: CodeInterpreterResponse = JSON.parse(message.content);
@@ -113,11 +156,11 @@ export const codeInterpreterSlice: StateCreator<
 
     const nextResult = produce(result, updater);
 
-    await get().optimisticUpdateMessageContent(id, JSON.stringify(nextResult));
-  },
+    await this.#get().optimisticUpdateMessageContent(id, JSON.stringify(nextResult));
+  };
 
-  uploadInterpreterFiles: async (id: string, files: CodeInterpreterFileItem[]) => {
-    const { updateInterpreterFileItem } = get();
+  uploadInterpreterFiles = async (id: string, files: CodeInterpreterFileItem[]): Promise<void> => {
+    const { updateInterpreterFileItem } = this.#get();
 
     if (!files) return;
 
@@ -143,15 +186,15 @@ export const codeInterpreterSlice: StateCreator<
         console.error('Failed to upload CodeInterpreter file:', error);
       }
     });
-  },
+  };
 
-  useFetchInterpreterFileItem: (id) =>
-    useClientDataSWR(id ? [SWR_FETCH_INTERPRETER_FILE_KEY, id] : null, async () => {
+  useFetchInterpreterFileItem = (id?: string): SWRResponse => {
+    return useClientDataSWR(id ? [SWR_FETCH_INTERPRETER_FILE_KEY, id] : null, async () => {
       if (!id) return null;
 
       const item = await fileService.getFile(id);
 
-      set(
+      this.#set(
         produce((draft) => {
           if (!draft.codeInterpreterFileMap) {
             draft.codeInterpreterFileMap = {};
@@ -165,5 +208,11 @@ export const codeInterpreterSlice: StateCreator<
       );
 
       return item;
-    }),
-});
+    });
+  };
+}
+
+export type ChatCodeInterpreterAction = Pick<
+  ChatCodeInterpreterActionImpl,
+  keyof ChatCodeInterpreterActionImpl
+>;

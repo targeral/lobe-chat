@@ -1,8 +1,9 @@
 import {
-  DesktopNotificationResult,
-  ShowDesktopNotificationParams,
-  dispatch,
+  type DesktopNotificationResult,
+  type ShowDesktopNotificationParams,
 } from '@lobechat/electron-client-ipc';
+
+import { ensureElectronIpc } from '@/utils/electron/ipc';
 
 /**
  * Desktop notification service
@@ -16,7 +17,7 @@ export class DesktopNotificationService {
   async showNotification(
     params: ShowDesktopNotificationParams,
   ): Promise<DesktopNotificationResult> {
-    return dispatch('showDesktopNotification', params);
+    return ensureElectronIpc().notification.showDesktopNotification(params);
   }
 
   /**
@@ -24,7 +25,7 @@ export class DesktopNotificationService {
    * @returns Whether it is hidden
    */
   async isMainWindowHidden(): Promise<boolean> {
-    return dispatch('isMainWindowHidden');
+    return ensureElectronIpc().notification.isMainWindowHidden();
   }
 }
 

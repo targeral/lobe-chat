@@ -1,4 +1,5 @@
-/* eslint-disable sort-keys-fix/sort-keys-fix, typescript-sort-keys/interface */
+import type { ChatToolPayload } from '@lobechat/types';
+
 import type { AgentState, ToolsCalling } from './state';
 
 export interface AgentEventInit {
@@ -6,51 +7,51 @@ export interface AgentEventInit {
 }
 
 export interface AgentEventLlmStart {
-  type: 'llm_start';
   payload: unknown;
+  type: 'llm_start';
 }
 
 export interface AgentEventLlmStream {
-  type: 'llm_stream';
   chunk: unknown;
+  type: 'llm_stream';
 }
 
 export interface AgentEventLlmResult {
-  type: 'llm_result';
   result: unknown;
+  type: 'llm_result';
 }
 
 export interface AgentEventToolPending {
-  type: 'tool_pending';
   toolCalls: ToolsCalling[];
+  type: 'tool_pending';
 }
 
 export interface AgentEventToolResult {
-  type: 'tool_result';
   id: string;
   result: any;
+  type: 'tool_result';
 }
 
 export interface AgentEventHumanApproveRequired {
+  operationId: string;
+  pendingToolsCalling: ChatToolPayload[];
   type: 'human_approve_required';
-  pendingToolsCalling: ToolsCalling[];
-  sessionId: string;
 }
 
 export interface AgentEventHumanPromptRequired {
-  type: 'human_prompt_required';
   metadata?: Record<string, unknown>;
+  operationId: string;
   prompt: string;
-  sessionId: string;
+  type: 'human_prompt_required';
 }
 
 export interface AgentEventHumanSelectRequired {
-  type: 'human_select_required';
   metadata?: Record<string, unknown>;
   multi?: boolean;
+  operationId: string;
   options: { label: string; value: string }[];
   prompt?: string;
-  sessionId: string;
+  type: 'human_select_required';
 }
 
 /**
@@ -59,7 +60,9 @@ export interface AgentEventHumanSelectRequired {
 export type FinishReason =
   | 'completed' // Normal completion
   | 'user_requested' // User requested to end
+  | 'user_aborted' // User abort
   | 'max_steps_exceeded' // Reached maximum steps limit
+  | 'max_steps_completed' // Completed after reaching max steps (forceFinish)
   | 'cost_limit_exceeded' // Reached cost limit
   | 'timeout' // Execution timeout
   | 'agent_decision' // Agent decided to finish
@@ -67,32 +70,43 @@ export type FinishReason =
   | 'system_shutdown'; // System is shutting down
 
 export interface AgentEventDone {
-  type: 'done';
   finalState: AgentState;
   reason: FinishReason;
   reasonDetail?: string;
+  type: 'done';
 }
 
 export interface AgentEventError {
-  type: 'error';
   error: any;
+  type: 'error';
 }
 
 export interface AgentEventInterrupted {
-  type: 'interrupted';
-  reason: string;
+  canResume: boolean;
   interruptedAt: string;
   interruptedInstruction?: any;
-  canResume: boolean;
   metadata?: Record<string, unknown>;
+  reason: string;
+  type: 'interrupted';
 }
 
 export interface AgentEventResumed {
-  type: 'resumed';
+  metadata?: Record<string, unknown>;
   reason: string;
   resumedAt: string;
   resumedFromStep: number;
-  metadata?: Record<string, unknown>;
+  type: 'resumed';
+}
+
+export interface AgentEventCompressionComplete {
+  groupId: string;
+  parentMessageId?: string;
+  type: 'compression_complete';
+}
+
+export interface AgentEventCompressionError {
+  error: unknown;
+  type: 'compression_error';
 }
 
 /**
@@ -118,4 +132,7 @@ export type AgentEvent =
   | AgentEventHumanSelectRequired
   // Interruption and resumption
   | AgentEventInterrupted
-  | AgentEventResumed;
+  | AgentEventResumed
+  // Context compression
+  | AgentEventCompressionComplete
+  | AgentEventCompressionError;

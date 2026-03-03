@@ -1,52 +1,138 @@
 import {
-  ChatErrorType,
-  ChatImageItem,
-  ChatMessageError,
-  ChatMessagePluginError,
-  CreateMessageParams,
-  GroundingSearch,
-  MessageMetadata,
-  MessageToolCall,
-  ModelReasoning,
-  UIChatMessage,
-  UpdateMessageRAGParams,
+  type ChatImageItem,
+  type ChatMessageError,
+  type ChatMessagePluginError,
+  type ChatToolPayload,
+  type CreateMessageParams,
+  type GroundingSearch,
+  type MessageMetadata,
+  type MessagePluginItem,
+  type ModelReasoning,
+  type UIChatMessage,
+  type UpdateMessageRAGParams,
 } from '@lobechat/types';
+import { ChatErrorType } from '@lobechat/types';
 import { nanoid } from '@lobechat/utils';
-import { StateCreator } from 'zustand/vanilla';
 
 import { messageService } from '@/services/message';
-import { ChatStore } from '@/store/chat/store';
+import { type ChatStore } from '@/store/chat/store';
+import { type StoreSetter } from '@/store/types';
+
+/**
+ * Context for optimistic updates to specify session/topic isolation
+ */
+export interface OptimisticUpdateContext {
+  operationId?: string;
+  /** Pre-generated temp message ID (used when ID needs to be known before creation) */
+  tempMessageId?: string;
+}
 
 /**
  * Optimistic update operations
  * All methods follow the pattern: update frontend first, then persist to database
  */
-export interface MessageOptimisticUpdateAction {
-  /**
-   * create a message with optimistic update
-   * returns the created message ID and updated message list
-   */
-  optimisticCreateMessage: (
-    params: CreateMessageParams,
-    context?: { groupMessageId?: string; skipRefresh?: boolean; tempMessageId?: string },
-  ) => Promise<{ id: string; messages: UIChatMessage[] } | undefined>;
 
-  /**
-   * create a temp message for optimistic update
-   * otherwise the message will be too slow to show
-   */
-  optimisticCreateTmpMessage: (params: CreateMessageParams) => string;
+type Setter = StoreSetter<ChatStore>;
+export const messageOptimisticUpdate = (set: Setter, get: () => ChatStore, _api?: unknown) =>
+  new MessageOptimisticUpdateActionImpl(set, get, _api);
 
-  /**
-   * delete the message content with optimistic update
-   */
-  optimisticDeleteMessage: (id: string) => Promise<void>;
+export class MessageOptimisticUpdateActionImpl {
+  readonly #get: () => ChatStore;
 
-  /**
-   * update the message content with optimistic update
-   * a method used by other action
-   */
-  optimisticUpdateMessageContent: (
+  constructor(set: Setter, get: () => ChatStore, _api?: unknown) {
+    void _api;
+    void set;
+    this.#get = get;
+  }
+
+  optimisticCreateMessage = async (
+    message: CreateMessageParams,
+    context?: {
+      groupMessageId?: string;
+      operationId?: string;
+      tempMessageId?: string;
+    },
+  ): Promise<{ id: string; messages: UIChatMessage[] } | undefined> => {
+    const {
+      optimisticCreateTmpMessage,
+      internal_toggleMessageLoading,
+      internal_dispatchMessage,
+      replaceMessages,
+    } = this.#get();
+
+    let tempId = context?.tempMessageId;
+    if (!tempId) {
+      tempId = optimisticCreateTmpMessage(message as any, context);
+      internal_toggleMessageLoading(true, tempId);
+    }
+
+    try {
+      const result = await messageService.createMessage(message);
+
+      // Use the messages returned from createMessage (already grouped)
+      const ctx = this.#get().internal_getConversationContext(context);
+      replaceMessages(result.messages, { context: ctx });
+
+      internal_toggleMessageLoading(false, tempId);
+      return result;
+    } catch (e) {
+      internal_toggleMessageLoading(false, tempId);
+      internal_dispatchMessage(
+        {
+          id: tempId,
+          type: 'updateMessage',
+          value: {
+            error: {
+              body: e,
+              message: (e as Error).message,
+              type: ChatErrorType.CreateMessageError,
+            },
+          },
+        },
+        context,
+      );
+    }
+  };
+
+  optimisticCreateTmpMessage = (
+    message: CreateMessageParams,
+    context?: OptimisticUpdateContext,
+  ): string => {
+    const { internal_dispatchMessage } = this.#get();
+
+    // use optimistic update to avoid the slow waiting
+    // use pre-generated tempMessageId if provided, otherwise generate a new one
+    const tempId = context?.tempMessageId || 'tmp_' + nanoid();
+    internal_dispatchMessage({ id: tempId, type: 'createMessage', value: message }, context);
+
+    return tempId;
+  };
+
+  optimisticDeleteMessage = async (
+    id: string,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    this.#get().internal_dispatchMessage({ id, type: 'deleteMessage' }, context);
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.removeMessage(id, ctx);
+    if (result?.success && result.messages) {
+      this.#get().replaceMessages(result.messages, { context: ctx });
+    }
+  };
+
+  optimisticDeleteMessages = async (
+    ids: string[],
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    this.#get().internal_dispatchMessage({ ids, type: 'deleteMessages' }, context);
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.removeMessages(ids, ctx);
+    if (result?.success && result.messages) {
+      this.#get().replaceMessages(result.messages, { context: ctx });
+    }
+  };
+
+  optimisticUpdateMessageContent = async (
     id: string,
     content: string,
     extra?: {
@@ -56,128 +142,36 @@ export interface MessageOptimisticUpdateAction {
       provider?: string;
       reasoning?: ModelReasoning;
       search?: GroundingSearch;
-      toolCalls?: MessageToolCall[];
+      tools?: ChatToolPayload[];
     },
-  ) => Promise<void>;
-
-  /**
-   * update the message error with optimistic update
-   */
-  optimisticUpdateMessageError: (id: string, error: ChatMessageError | null) => Promise<void>;
-
-  /**
-   * update the message metadata with optimistic update
-   */
-  optimisticUpdateMessageMetadata: (
-    id: string,
-    metadata: Partial<MessageMetadata>,
-  ) => Promise<void>;
-
-  /**
-   * update the message plugin error with optimistic update
-   */
-  optimisticUpdateMessagePluginError: (
-    id: string,
-    error: ChatMessagePluginError | null,
-  ) => Promise<void>;
-
-  /**
-   * update message RAG with optimistic update
-   */
-  optimisticUpdateMessageRAG: (id: string, input: UpdateMessageRAGParams) => Promise<void>;
-}
-
-export const messageOptimisticUpdate: StateCreator<
-  ChatStore,
-  [['zustand/devtools', never]],
-  [],
-  MessageOptimisticUpdateAction
-> = (set, get) => ({
-  optimisticCreateMessage: async (message, context) => {
-    const {
-      optimisticCreateTmpMessage,
-      internal_toggleMessageLoading,
-      internal_dispatchMessage,
-      replaceMessages,
-    } = get();
-
-    let tempId = context?.tempMessageId;
-    if (!tempId) {
-      tempId = optimisticCreateTmpMessage(message as any);
-      internal_toggleMessageLoading(true, tempId);
-    }
-
-    try {
-      const result = await messageService.createMessage(message);
-
-      if (!context?.skipRefresh) {
-        // Use the messages returned from createMessage (already grouped)
-        replaceMessages(result.messages);
-      }
-
-      internal_toggleMessageLoading(false, tempId);
-      return result;
-    } catch (e) {
-      internal_toggleMessageLoading(false, tempId);
-      internal_dispatchMessage({
-        id: tempId,
-        type: 'updateMessage',
-        value: {
-          error: {
-            body: e,
-            message: (e as Error).message,
-            type: ChatErrorType.CreateMessageError,
-          },
-        },
-      });
-    }
-  },
-
-  optimisticCreateTmpMessage: (message) => {
-    const { internal_dispatchMessage } = get();
-
-    // use optimistic update to avoid the slow waiting
-    const tempId = 'tmp_' + nanoid();
-    internal_dispatchMessage({ id: tempId, type: 'createMessage', value: message });
-
-    return tempId;
-  },
-
-  optimisticDeleteMessage: async (id: string) => {
-    get().internal_dispatchMessage({ id, type: 'deleteMessage' });
-    const result = await messageService.removeMessage(id, {
-      sessionId: get().activeId,
-      topicId: get().activeTopicId,
-    });
-    if (result?.success && result.messages) {
-      get().replaceMessages(result.messages);
-    }
-  },
-
-  optimisticUpdateMessageContent: async (id, content, extra) => {
-    const {
-      internal_dispatchMessage,
-      refreshMessages,
-      internal_transformToolCalls,
-      replaceMessages,
-    } = get();
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    const { internal_dispatchMessage, refreshMessages, replaceMessages } = this.#get();
 
     // Due to the async update method and refresh need about 100ms
     // we need to update the message content at the frontend to avoid the update flick
     // refs: https://medium.com/@kyledeguzmanx/what-are-optimistic-updates-483662c3e171
-    if (extra?.toolCalls) {
-      internal_dispatchMessage({
-        id,
-        type: 'updateMessage',
-        value: { tools: internal_transformToolCalls(extra?.toolCalls) },
-      });
+    if (extra?.tools) {
+      internal_dispatchMessage(
+        {
+          id,
+          type: 'updateMessage',
+          value: { tools: extra?.tools },
+        },
+        context,
+      );
     } else {
-      internal_dispatchMessage({
-        id,
-        type: 'updateMessage',
-        value: { content },
-      });
+      internal_dispatchMessage(
+        {
+          id,
+          type: 'updateMessage',
+          value: { content, metadata: extra?.metadata },
+        },
+        context,
+      );
     }
+
+    const ctx = this.#get().internal_getConversationContext(context);
 
     const result = await messageService.updateMessage(
       id,
@@ -189,72 +183,95 @@ export const messageOptimisticUpdate: StateCreator<
         provider: extra?.provider,
         reasoning: extra?.reasoning,
         search: extra?.search,
-        tools: extra?.toolCalls ? internal_transformToolCalls(extra?.toolCalls) : undefined,
+        tools: extra?.tools,
       },
-      { sessionId: get().activeId, topicId: get().activeTopicId },
+      ctx,
     );
 
     if (result && result.success && result.messages) {
-      replaceMessages(result.messages, { action: 'optimisticUpdateMessageContent' });
+      replaceMessages(result.messages, { action: 'optimisticUpdateMessageContent', context: ctx });
     } else {
       await refreshMessages();
     }
-  },
+  };
 
-  optimisticUpdateMessageError: async (id, error) => {
-    get().internal_dispatchMessage({ id, type: 'updateMessage', value: { error } });
-    const result = await messageService.updateMessage(
-      id,
-      { error },
-      { sessionId: get().activeId, topicId: get().activeTopicId },
-    );
+  optimisticUpdateMessageError = async (
+    id: string,
+    error: ChatMessageError | null,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    this.#get().internal_dispatchMessage({ id, type: 'updateMessage', value: { error } }, context);
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.updateMessage(id, { error }, ctx);
     if (result?.success && result.messages) {
-      get().replaceMessages(result.messages);
+      this.#get().replaceMessages(result.messages, { context: ctx });
     } else {
-      await get().refreshMessages();
+      await this.#get().refreshMessages();
     }
-  },
+  };
 
-  optimisticUpdateMessageMetadata: async (id, metadata) => {
-    const { internal_dispatchMessage, refreshMessages, replaceMessages } = get();
+  optimisticUpdateMessageMetadata = async (
+    id: string,
+    metadata: Partial<MessageMetadata>,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    const { internal_dispatchMessage, refreshMessages, replaceMessages } = this.#get();
 
-    // Optimistic update: update the frontend immediately
-    internal_dispatchMessage({
-      id,
-      type: 'updateMessageMetadata',
-      value: metadata,
-    });
+    internal_dispatchMessage({ id, type: 'updateMessageMetadata', value: metadata }, context);
 
-    // Persist to database
-    const result = await messageService.updateMessageMetadata(id, metadata, {
-      sessionId: get().activeId,
-      topicId: get().activeTopicId,
-    });
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.updateMessageMetadata(id, metadata, ctx);
 
     if (result?.success && result.messages) {
-      replaceMessages(result.messages);
+      replaceMessages(result.messages, { context: ctx });
     } else {
       await refreshMessages();
     }
-  },
+  };
 
-  optimisticUpdateMessagePluginError: async (id, error) => {
-    const result = await messageService.updateMessagePluginError(id, error, {
-      sessionId: get().activeId,
-      topicId: get().activeTopicId,
-    });
-    if (result?.success && result.messages) {
-      get().replaceMessages(result.messages);
-    }
-  },
+  optimisticUpdateMessagePlugin = async (
+    id: string,
+    value: Partial<MessagePluginItem>,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    const { internal_dispatchMessage, replaceMessages } = this.#get();
 
-  optimisticUpdateMessageRAG: async (id, data) => {
-    const result = await messageService.updateMessageRAG(id, data, {
-      sessionId: get().activeId,
-      topicId: get().activeTopicId,
-    });
+    internal_dispatchMessage({ id, type: 'updateMessagePlugin', value }, context);
+
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.updateMessagePlugin(id, value, ctx);
+
     if (result?.success && result.messages) {
-      get().replaceMessages(result.messages);
+      replaceMessages(result.messages, { context: ctx });
     }
-  },
-});
+  };
+
+  optimisticUpdateMessagePluginError = async (
+    id: string,
+    error: ChatMessagePluginError | null,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.updateMessagePluginError(id, error, ctx);
+    if (result?.success && result.messages) {
+      this.#get().replaceMessages(result.messages, { context: ctx });
+    }
+  };
+
+  optimisticUpdateMessageRAG = async (
+    id: string,
+    data: UpdateMessageRAGParams,
+    context?: OptimisticUpdateContext,
+  ): Promise<void> => {
+    const ctx = this.#get().internal_getConversationContext(context);
+    const result = await messageService.updateMessageRAG(id, data, ctx);
+    if (result?.success && result.messages) {
+      this.#get().replaceMessages(result.messages, { context: ctx });
+    }
+  };
+}
+
+export type MessageOptimisticUpdateAction = Pick<
+  MessageOptimisticUpdateActionImpl,
+  keyof MessageOptimisticUpdateActionImpl
+>;

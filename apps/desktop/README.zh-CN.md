@@ -1,6 +1,6 @@
 # 🤯 LobeHub 桌面应用程序
 
-LobeHub Desktop 是 [LobeChat](https://github.com/lobehub/lobe-chat) 的跨平台桌面应用程序，使用 Electron 构建，提供了更加原生的桌面体验和功能。
+LobeHub Desktop 是 [LobeHub](https://github.com/lobehub/lobe-chat) 的跨平台桌面应用程序，使用 Electron 构建，提供了更加原生的桌面体验和功能。
 
 ## ✨ 功能特点
 
@@ -11,7 +11,7 @@ LobeHub Desktop 是 [LobeChat](https://github.com/lobehub/lobe-chat) 的跨平�
 - **🔒 安全可靠**：macOS 公证认证，加密令牌存储，安全的 OAuth 流程
 - **📦 多渠道发布**：提供稳定版、测试版和每日构建版本
 - **⚡ 高级窗口管理**：多窗口架构，支持主题同步
-- **🔗 远程服务器同步**：与远程 LobeChat 实例的安全数据同步
+- **🔗 远程服务器同步**：与远程 LobeHub 实例的安全数据同步
 - **🎯 开发者工具**：内置开发面板和全面的调试工具
 
 ## 🚀 开发环境设置
@@ -29,10 +29,10 @@ LobeHub Desktop 是 [LobeChat](https://github.com/lobehub/lobe-chat) 的跨平�
 pnpm install-isolated
 
 # 启动开发服务器
-pnpm electron:dev
+pnpm dev
 
 # 类型检查
-pnpm typecheck
+pnpm type-check
 
 # 运行测试
 pnpm test
@@ -51,31 +51,32 @@ cp .env.desktop .env
 
 ### 构建命令
 
-| 命令               | 描述                               |
-| ------------------ | ---------------------------------- |
-| `pnpm build`       | 构建所有平台                       |
-| `pnpm build:mac`   | 构建 macOS (Intel + Apple Silicon) |
-| `pnpm build:win`   | 构建 Windows                       |
-| `pnpm build:linux` | 构建 Linux                         |
-| `pnpm build-local` | 本地开发构建                       |
+| 命令                       | 描述                               |
+| -------------------------- | ---------------------------------- |
+| `pnpm build:main`          | 构建 main/preload（仅产出 dist）   |
+| `pnpm package:mac`         | 打包 macOS (Intel + Apple Silicon) |
+| `pnpm package:win`         | 打包 Windows                       |
+| `pnpm package:linux`       | 打包 Linux                         |
+| `pnpm package:local`       | 本地打包（不打 ASAR）              |
+| `pnpm package:local:reuse` | 本地打包复用已有 dist              |
 
 ### 开发工作流
 
 ```bash
 # 1. 开发
-pnpm electron:dev # 启动热重载开发服务器
+pnpm dev # 启动热重载开发服务器
 
 # 2. 代码质量
-pnpm lint      # ESLint 检查
-pnpm format    # Prettier 格式化
-pnpm typecheck # TypeScript 验证
+pnpm lint       # ESLint 检查
+pnpm format     # Prettier 格式化
+pnpm type-check # TypeScript 验证
 
 # 3. 测试
 pnpm test # 运行 Vitest 测试
 
 # 4. 构建和打包
-pnpm build       # 生产构建
-pnpm build-local # 本地测试构建
+pnpm build:main    # 生产构建（仅 dist）
+pnpm package:local # 本地测试打包
 ```
 
 ## 🎯 发布渠道
@@ -183,7 +184,7 @@ src/main/core/
 #### 🔌 依赖注入和事件系统
 
 - **IoC 容器** - 基于 WeakMap 的装饰控制器方法容器
-- **装饰器注册** - `@ipcClientEvent` 和 `@ipcServerEvent` 装饰器
+- **装饰器注册** - `@IpcMethod` 装饰器
 - **自动事件映射** - 控制器加载期间注册的事件
 - **服务定位器** - 类型安全的服务和控制器检索
 
@@ -256,6 +257,17 @@ src/main/core/
 - **上下文感知** - 事件包含用于窗口特定操作的发送者上下文
 - **错误传播** - 具有适当状态码的集中错误处理
 
+##### 🧩 渲染器 IPC 助手
+
+渲染端通过 `src/utils/electron/ipc.ts` 提供的 `ensureElectronIpc` 获得一个运行时代理，无需在 preload 中暴露 Proxy 对象即可获得类型安全的调用体验：
+
+```ts
+import { ensureElectronIpc } from '@/utils/electron/ipc';
+
+const ipc = ensureElectronIpc();
+await ipc.windows.openSettingsWindow({ tab: 'provider' });
+```
+
 #### 🛡️ 安全功能
 
 - **OAuth 2.0 + PKCE** - 具有状态参数验证的安全认证
@@ -277,7 +289,7 @@ tests/                                       # 集成测试
 ```bash
 pnpm test       # 运行所有测试
 pnpm test:watch # 监视模式
-pnpm typecheck  # 类型验证
+pnpm type-check # 类型验证
 ```
 
 ### 测试覆盖
@@ -325,7 +337,7 @@ pnpm typecheck  # 类型验证
 
 ### 贡献流程
 
-1. Fork [LobeChat 仓库](https://github.com/lobehub/lobe-chat)
+1. Fork [LobeHub 仓库](https://github.com/lobehub/lobe-chat)
 2. 按照我们的设置指南建立桌面开发环境
 3. 对桌面应用程序进行修改
 4. 提交 Pull Request 并描述：

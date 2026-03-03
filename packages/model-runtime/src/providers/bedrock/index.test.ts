@@ -3,14 +3,13 @@ import {
   InvokeModelCommand,
   InvokeModelWithResponseStreamCommand,
 } from '@aws-sdk/client-bedrock-runtime';
-import { AgentRuntimeErrorType } from '@lobechat/model-runtime';
 import { ModelProvider } from 'model-bank';
-import { Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AgentRuntimeErrorType } from '../../types/error';
 import * as debugStreamModule from '../../utils/debugStream';
-import { LobeBedrockAI, experimental_buildLlama2Prompt } from './index';
-
-const provider = 'bedrock';
+import { experimental_buildLlama2Prompt, LobeBedrockAI } from './index';
 
 // Mock the console.error to avoid polluting test output
 vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -173,7 +172,18 @@ describe('LobeBedrockAI', () => {
           body: JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 4096,
-            messages: [{ content: 'Hello', role: 'user' }],
+            messages: [
+              {
+                content: [
+                  {
+                    cache_control: { type: 'ephemeral' },
+                    text: 'Hello',
+                    type: 'text',
+                  },
+                ],
+                role: 'user',
+              },
+            ],
             temperature: 0,
             top_p: 1,
           }),
@@ -211,8 +221,25 @@ describe('LobeBedrockAI', () => {
           body: JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 4096,
-            messages: [{ content: 'Hello', role: 'user' }],
-            system: 'You are an awesome greeter',
+            messages: [
+              {
+                content: [
+                  {
+                    cache_control: { type: 'ephemeral' },
+                    text: 'Hello',
+                    type: 'text',
+                  },
+                ],
+                role: 'user',
+              },
+            ],
+            system: [
+              {
+                cache_control: { type: 'ephemeral' },
+                text: 'You are an awesome greeter',
+                type: 'text',
+              },
+            ],
             temperature: 0,
             top_p: 1,
           }),
@@ -248,7 +275,18 @@ describe('LobeBedrockAI', () => {
           body: JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 2048,
-            messages: [{ content: 'Hello', role: 'user' }],
+            messages: [
+              {
+                content: [
+                  {
+                    cache_control: { type: 'ephemeral' },
+                    text: 'Hello',
+                    type: 'text',
+                  },
+                ],
+                role: 'user',
+              },
+            ],
             temperature: 0.25,
             top_p: 1,
           }),
@@ -327,7 +365,18 @@ describe('LobeBedrockAI', () => {
           body: JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 4096,
-            messages: [{ content: 'Hello', role: 'user' }],
+            messages: [
+              {
+                content: [
+                  {
+                    cache_control: { type: 'ephemeral' },
+                    text: 'Hello',
+                    type: 'text',
+                  },
+                ],
+                role: 'user',
+              },
+            ],
             temperature: 0,
           }),
           contentType: 'application/json',
@@ -363,7 +412,18 @@ describe('LobeBedrockAI', () => {
           body: JSON.stringify({
             anthropic_version: 'bedrock-2023-05-31',
             max_tokens: 2048,
-            messages: [{ content: 'Hello', role: 'user' }],
+            messages: [
+              {
+                content: [
+                  {
+                    cache_control: { type: 'ephemeral' },
+                    text: 'Hello',
+                    type: 'text',
+                  },
+                ],
+                role: 'user',
+              },
+            ],
             temperature: 0.25,
             top_p: 1,
           }),
@@ -417,8 +477,19 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 4096,
-              messages: [{ content: 'Hello', role: 'user' }],
+              max_tokens: 8192,
+              messages: [
+                {
+                  content: [
+                    {
+                      cache_control: { type: 'ephemeral' },
+                      text: 'Hello',
+                      type: 'text',
+                    },
+                  ],
+                  role: 'user',
+                },
+              ],
               temperature: 0.4, // temperature / 2, top_p omitted due to conflict
             }),
             contentType: 'application/json',
@@ -449,8 +520,19 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 4096,
-              messages: [{ content: 'Hello', role: 'user' }],
+              max_tokens: 8192,
+              messages: [
+                {
+                  content: [
+                    {
+                      cache_control: { type: 'ephemeral' },
+                      text: 'Hello',
+                      type: 'text',
+                    },
+                  ],
+                  role: 'user',
+                },
+              ],
               top_p: 0.9, // temperature omitted since not provided
             }),
             contentType: 'application/json',
@@ -482,8 +564,19 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 4096,
-              messages: [{ content: 'Hello', role: 'user' }],
+              max_tokens: 8192,
+              messages: [
+                {
+                  content: [
+                    {
+                      cache_control: { type: 'ephemeral' },
+                      text: 'Hello',
+                      type: 'text',
+                    },
+                  ],
+                  role: 'user',
+                },
+              ],
               temperature: 0.4, // temperature / 2
               top_p: 0.9, // both parameters allowed for older models
             }),
@@ -516,8 +609,19 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 4096,
-              messages: [{ content: 'Hello', role: 'user' }],
+              max_tokens: 64_000,
+              messages: [
+                {
+                  content: [
+                    {
+                      cache_control: { type: 'ephemeral' },
+                      text: 'Hello',
+                      type: 'text',
+                    },
+                  ],
+                  role: 'user',
+                },
+              ],
               temperature: 0.3, // temperature / 2, top_p omitted due to conflict
             }),
             contentType: 'application/json',
@@ -549,8 +653,19 @@ describe('LobeBedrockAI', () => {
             accept: 'application/json',
             body: JSON.stringify({
               anthropic_version: 'bedrock-2023-05-31',
-              max_tokens: 4096,
-              messages: [{ content: 'Hello', role: 'user' }],
+              max_tokens: 8192,
+              messages: [
+                {
+                  content: [
+                    {
+                      cache_control: { type: 'ephemeral' },
+                      text: 'Hello',
+                      type: 'text',
+                    },
+                  ],
+                  role: 'user',
+                },
+              ],
               temperature: 0.35, // temperature / 2, top_p omitted due to conflict
             }),
             contentType: 'application/json',

@@ -1,5 +1,5 @@
-import { UIChatMessage } from '@lobechat/types';
-import { template } from 'lodash-es';
+import { type UIChatMessage } from '@lobechat/types';
+import { template } from 'es-toolkit/compat';
 
 import { LOADING_FLAT } from '@/const/message';
 
@@ -11,8 +11,8 @@ const markdownTemplate = template(
 <% }); %>
 `,
   {
-    evaluate: /<%([\S\s]+?)%>/g,
-    interpolate: /{{([\S\s]+?)}}/g,
+    evaluate: /<%([\s\S]+?)%>/g,
+    interpolate: /\{\{([\s\S]+?)\}\}/g,
   },
 );
 
